@@ -71,7 +71,7 @@ export function createPythaHooks(
       parseLength: (text) => ui.parseLength(text),
       formatNumber: (value) => ui.formatNumber(value),
       parseNumber: (text) => ui.parseNumber(text),
-      runModalDialog: (initFunc, data) => ui.runModalDialog(initFunc, data),
+      runModalDialog: (initFunc, data) => ui.runModalDialog(initFunc as any, data as any),
       createDialog: () => ui.createDialog(),
       setWindowTitle: (dialog, title) => ui.setWindowTitle(dialog, title),
       createLabel: (dialog, position, text) => ui.createLabel(dialog, position, text),
@@ -85,7 +85,7 @@ export function createPythaHooks(
       setOnChangeHandler: (control, handler) => ui.setOnChangeHandler(control, handler),
       setOnClickHandler: (control, handler) => ui.setOnClickHandler(control, handler),
       runModalSubdialog: (parentDialog, initFunc, data) =>
-        ui.runModalSubdialog(parentDialog, initFunc, data),
+        ui.runModalSubdialog(parentDialog, initFunc as any, data as any),
       endModalCancel: (dialog) => ui.endModalCancel(dialog),
       setControlText: (control, text) => ui.setControlText(control, text),
       setControlChecked: (control, checked) => ui.setControlChecked(control, checked),

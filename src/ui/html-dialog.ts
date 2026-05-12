@@ -1,4 +1,4 @@
-import type { DialogHandle, ControlHandle, Vector3, Vector2, MaterialHandle } from '../types/element';
+import type { DialogHandle, ControlHandle, Vector2 } from '../types/element';
 
 let dialogIdCounter = 0;
 let controlIdCounter = 0;
@@ -11,13 +11,11 @@ function generateControlId(): string {
   return `ctrl_${++controlIdCounter}`;
 }
 
-type ChangeHandler = (value: unknown) => void;
-type ClickHandler = () => void;
+export type LuaClosure = (...args: unknown[]) => void;
 
 export class HTMLUIPlatform {
-  private currentDialogResolve: ((value: unknown) => void) | null = null;
-  private changeHandlers = new Map<string, Set<ChangeHandler>>();
-  private clickHandlers = new Map<string, Set<ClickHandler>>();
+  private changeHandlers = new Map<string, LuaClosure[]>();
+  private clickHandlers = new Map<string, LuaClosure[]>();
   private dialogs = new Map<string, DialogHandle>();
   private controls = new Map<string, ControlHandle>();
 
@@ -32,118 +30,6 @@ export class HTMLUIPlatform {
   }
 
   setWindowTitle(dialog: DialogHandle, title: string): void {
-    dialog.id = dialog.id;
-  }
-
-  async runModalDialog<T>(
-    initFunc: (dialog: DialogHandle, data: T) => void,
-    data: T
-  ): Promise<T> {
-    return new Promise<T>((resolve) => {
-      const dialog = this.createDialog();
-
-      const controls = this.createHTMLElement('div', {
-        className: 'pytha-dialog',
-        parent: document.body,
-      });
-
-      const titleBar = this.createHTMLElement('div', {
-        className: 'pytha-dialog-title',
-        textContent: 'Dialog',
-        parent: controls,
-      });
-
-      const content = this.createHTMLElement('div', {
-        className: 'pytha-dialog-content',
-        parent: controls,
-      });
-
-      const footer = this.createHTMLElement('div', {
-        className: 'pytha-dialog-footer',
-        parent: controls,
-      });
-
-      const okButton = this.createHTMLElement('button', {
-        textContent: 'OK',
-        className: 'pytha-dialog-button pytha-dialog-ok',
-        parent: footer,
-        onClick: () => {
-          this.removeDialog(controls);
-          resolve(data);
-        },
-      });
-
-      const cancelButton = this.createHTMLElement('button', {
-        textContent: 'Cancel',
-        className: 'pytha-dialog-button pytha-dialog-cancel',
-        parent: footer,
-        onClick: () => {
-          this.removeDialog(controls);
-          resolve(data);
-        },
-      });
-
-      const wrappedDialog: DialogHandle = {
-        ...dialog,
-        controls: dialog.controls,
-      };
-
-      try {
-        initFunc(wrappedDialog, data);
-      } catch (e) {
-        console.error('Error in dialog init:', e);
-      }
-
-      for (const [id, control] of dialog.controls) {
-        const ctrlDiv = this.createHTMLElement('div', {
-          className: `pytha-control pytha-control-${control.controlType}`,
-          parent: content,
-        });
-
-        if ('value' in control) {
-          const input = this.createHTMLElement('input', {
-            type: control.controlType === 'check_box' ? 'checkbox' : 'text',
-            className: 'pytha-input',
-            parent: ctrlDiv,
-          });
-
-          if (control.controlType === 'check_box') {
-            (input as HTMLInputElement).checked = (control as { checked: boolean }).checked;
-          } else {
-            (input as HTMLInputElement).value = (control as { value: string }).value;
-          }
-
-          input.addEventListener('input', () => {
-            const handlers = this.changeHandlers.get(id);
-            if (handlers) {
-              const value = control.controlType === 'check_box'
-                ? (input as HTMLInputElement).checked
-                : (input as HTMLInputElement).value;
-              handlers.forEach(h => h(value));
-            }
-          });
-        }
-
-        if (control.controlType === 'ok' || control.controlType === 'cancel') {
-          (ctrlDiv as HTMLDivElement & { _pythaButton: string })._pythaButton = control.controlType;
-
-          const btn = ctrlDiv.querySelector('button') || this.createHTMLElement('button', {
-            textContent: control.controlType === 'ok' ? 'OK' : 'Cancel',
-            className: `pytha-dialog-button pytha-dialog-${control.controlType}`,
-            parent: ctrlDiv,
-          });
-
-          btn.addEventListener('click', () => {
-            const handlers = this.clickHandlers.get(id);
-            if (handlers) {
-              handlers.forEach(h => h());
-            }
-          });
-        }
-      }
-
-      this.currentDialogResolve = resolve as (value: unknown) => void;
-    });
   }
 
   createLabel(dialog: DialogHandle, position: number | Vector2, text: string): ControlHandle {
@@ -199,7 +85,7 @@ export class HTMLUIPlatform {
       _type: 'combo_box',
       id: generateControlId(),
       controlType: 'combo_box',
-      value: items[0],
+      selectedIndex: 0,
     };
     dialog.controls.set(control.id, control);
     this.controls.set(control.id, control);
@@ -240,18 +126,123 @@ export class HTMLUIPlatform {
     return control;
   }
 
-  setOnChangeHandler(control: ControlHandle, handler: (value: unknown) => void): void {
-    if (!this.changeHandlers.has(control.id)) {
-      this.changeHandlers.set(control.id, new Set());
-    }
-    this.changeHandlers.get(control.id)!.add(handler);
+  setOnChangeHandler(control: ControlHandle, handler: LuaClosure): void {
+    const handlers = this.changeHandlers.get(control.id) || [];
+    handlers.push(handler);
+    this.changeHandlers.set(control.id, handlers);
   }
 
-  setOnClickHandler(control: ControlHandle, handler: () => void): void {
-    if (!this.clickHandlers.has(control.id)) {
-      this.clickHandlers.set(control.id, new Set());
+  setOnClickHandler(control: ControlHandle, handler: LuaClosure): void {
+    const handlers = this.clickHandlers.get(control.id) || [];
+    handlers.push(handler);
+    this.clickHandlers.set(control.id, handlers);
+  }
+
+  runModalDialog(
+    initFunc: (dialog: DialogHandle, data: unknown) => void,
+    data: unknown
+  ): void {
+    const dialog = this.createDialog();
+    initFunc(dialog, data);
+    this.showDialog(dialog, data);
+  }
+
+  private showDialog(dialog: DialogHandle, data: unknown): void {
+    const dialogEl = document.createElement('div');
+    dialogEl.className = 'pytha-dialog';
+
+    const titleBar = document.createElement('div');
+    titleBar.className = 'pytha-dialog-title';
+    titleBar.textContent = 'Dialog';
+    dialogEl.appendChild(titleBar);
+
+    const content = document.createElement('div');
+    content.className = 'pytha-dialog-content';
+    dialogEl.appendChild(content);
+
+    const footer = document.createElement('div');
+    footer.className = 'pytha-dialog-footer';
+    dialogEl.appendChild(footer);
+
+    for (const [id, control] of dialog.controls) {
+      const ctrlDiv = document.createElement('div');
+      ctrlDiv.className = `pytha-control pytha-control-${control.controlType}`;
+      content.appendChild(ctrlDiv);
+
+      if (control.controlType === 'text_box' || control.controlType === 'label') {
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'pytha-input';
+        input.value = (control as { value: string }).value || '';
+        if (control.controlType === 'label') {
+          input.disabled = true;
+        }
+        ctrlDiv.appendChild(input);
+
+        input.addEventListener('input', () => {
+          const handlers = this.changeHandlers.get(id);
+          if (handlers) {
+            handlers.forEach(h => h(input.value));
+          }
+        });
+      }
+
+      if (control.controlType === 'check_box') {
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.className = 'pytha-input';
+        input.checked = (control as { checked: boolean }).checked;
+        ctrlDiv.appendChild(input);
+
+        input.addEventListener('change', () => {
+          const handlers = this.changeHandlers.get(id);
+          if (handlers) {
+            handlers.forEach(h => h(input.checked));
+          }
+        });
+      }
+
+      if (control.controlType === 'button') {
+        const btn = document.createElement('button');
+        btn.className = 'pytha-dialog-button';
+        btn.textContent = (control as { value: string }).value || 'Button';
+        ctrlDiv.appendChild(btn);
+
+        btn.addEventListener('click', () => {
+          const handlers = this.clickHandlers.get(id);
+          if (handlers) {
+            handlers.forEach(h => h());
+          }
+        });
+      }
+
+      if (control.controlType === 'ok' || control.controlType === 'cancel') {
+        const btn = document.createElement('button');
+        btn.className = `pytha-dialog-button pytha-dialog-${control.controlType}`;
+        btn.textContent = control.controlType === 'ok' ? 'OK' : 'Cancel';
+        footer.appendChild(btn);
+      }
     }
-    this.clickHandlers.get(control.id)!.add(handler);
+
+    const okBtn = document.createElement('button');
+    okBtn.className = 'pytha-dialog-button pytha-dialog-ok';
+    okBtn.textContent = 'OK';
+    footer.appendChild(okBtn);
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'pytha-dialog-button pytha-dialog-cancel';
+    cancelBtn.textContent = 'Cancel';
+    footer.appendChild(cancelBtn);
+
+    okBtn.addEventListener('click', () => {
+      this.removeDialog(dialogEl);
+    });
+
+    cancelBtn.addEventListener('click', () => {
+      this.removeDialog(dialogEl);
+    });
+
+    document.body.appendChild(dialogEl);
   }
 
   alert(message: string): void {
@@ -283,34 +274,36 @@ export class HTMLUIPlatform {
     return isNaN(num) ? undefined : num;
   }
 
-  runModalSubdialog<T, R>(parentDialog: DialogHandle, initFunc: (dialog: DialogHandle, data: T) => void, data: T): Promise<R> {
-    return this.runModalDialog(initFunc, data) as Promise<R>;
+  runModalSubdialog(
+    parentDialog: DialogHandle,
+    initFunc: (dialog: DialogHandle, data: unknown) => void,
+    data: unknown
+  ): void {
+    const dialog = this.createDialog();
+    initFunc(dialog, data);
+    this.showDialog(dialog, data);
   }
 
   endModalCancel(dialog: DialogHandle): void {
-    if (this.currentDialogResolve) {
-      this.currentDialogResolve(null);
-      this.currentDialogResolve = null;
-    }
   }
 
   setControlText(control: ControlHandle, text: string): void {
     const ctrl = this.controls.get(control.id);
-    if (ctrl && 'value' in ctrl) {
+    if (ctrl && ctrl.controlType === 'text_box') {
       (ctrl as { value: string }).value = text;
     }
   }
 
   setControlChecked(control: ControlHandle, checked: boolean): void {
     const ctrl = this.controls.get(control.id);
-    if (ctrl && ctrl._type === 'check_box') {
+    if (ctrl && ctrl.controlType === 'check_box') {
       (ctrl as { checked: boolean }).checked = checked;
     }
   }
 
   clearControlItems(control: ControlHandle): void {
     const ctrl = this.controls.get(control.id);
-    if (ctrl && 'items' in ctrl) {
+    if (ctrl && (ctrl.controlType === 'combo_box' || ctrl.controlType === 'list_box')) {
       (ctrl as { items: string[] }).items = [];
     }
   }
@@ -321,23 +314,12 @@ export class HTMLUIPlatform {
   createAlign(dialog: DialogHandle, columns: number[]): void {
   }
 
-  private createHTMLElement<K extends keyof HTMLElementTagNameMap>(
-    tag: K,
-    options: {
-      className?: string;
-      textContent?: string;
-      parent?: HTMLElement;
-      onClick?: () => void;
-    } & Record<string, unknown>
-  ): HTMLElementTagNameMap[K] {
-    const el = document.createElement(tag);
+  getChangeHandlers(controlId: string): LuaClosure[] {
+    return this.changeHandlers.get(controlId) || [];
+  }
 
-    if (options.className) el.className = options.className;
-    if (options.textContent) el.textContent = options.textContent;
-    if (options.parent) options.parent.appendChild(el);
-    if (options.onClick) el.addEventListener('click', options.onClick);
-
-    return el;
+  getClickHandlers(controlId: string): LuaClosure[] {
+    return this.clickHandlers.get(controlId) || [];
   }
 
   private removeDialog(element: HTMLElement): void {

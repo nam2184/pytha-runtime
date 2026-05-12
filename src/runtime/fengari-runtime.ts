@@ -413,10 +413,7 @@ export class FengariRuntime {
           const initFunc = tojs(_L, 1);
           const data = lua.lua_gettop(_L) >= 2 ? tojs(_L, 2) : undefined;
 
-          self.callbacks.onDialogCreate?.(data);
-
           const dialog = hooks.pyui.createDialog();
-
           const wrappedDialog = self.createDialogProxy(dialog);
 
           try {
@@ -425,14 +422,9 @@ export class FengariRuntime {
             self.callbacks.onError?.(e instanceof Error ? e : new Error(String(e)));
           }
 
-          hooks.pyui.runModalDialog(
-            (_d: unknown, _result: unknown) => {
-              push(_L, _result);
-            },
-            data
-          );
+          hooks.pyui.runModalDialog(() => {}, data);
 
-          return 1;
+          return 0;
         });
       }],
       ['end_modal_cancel', () => {
@@ -458,33 +450,52 @@ export class FengariRuntime {
   private createDialogProxy(dialog: ReturnType<typeof this.hooks.pyui.createDialog>) {
     const self = this;
 
+    const wrapControl = (control: ReturnType<typeof this.hooks.pyui.createLabel>) => {
+      return {
+        set_on_change_handler: (handler: unknown) => {
+          self.hooks.pyui.setOnChangeHandler(control as any, handler as any);
+        },
+        set_on_click_handler: (handler: unknown) => {
+          self.hooks.pyui.setOnClickHandler(control as any, handler as any);
+        },
+      };
+    };
+
     return {
       set_window_title: (title: string) => {
         self.hooks.pyui.setWindowTitle(dialog, title);
       },
       create_label: (position: unknown, text: string) => {
-        return self.hooks.pyui.createLabel(dialog, position as any, text);
+        const ctrl = self.hooks.pyui.createLabel(dialog, position as any, text);
+        return wrapControl(ctrl);
       },
       create_text_box: (position: unknown, value: string) => {
-        return self.hooks.pyui.createTextBox(dialog, position as any, value);
+        const ctrl = self.hooks.pyui.createTextBox(dialog, position as any, value);
+        return wrapControl(ctrl);
       },
       create_button: (position: unknown, label: string) => {
-        return self.hooks.pyui.createButton(dialog, position as any, label);
+        const ctrl = self.hooks.pyui.createButton(dialog, position as any, label);
+        return wrapControl(ctrl);
       },
       create_check_box: (position: unknown, label: string) => {
-        return self.hooks.pyui.createCheckBox(dialog, position as any, label);
+        const ctrl = self.hooks.pyui.createCheckBox(dialog, position as any, label);
+        return wrapControl(ctrl);
       },
       create_combo_box: (position: unknown, items: string[]) => {
-        return self.hooks.pyui.createComboBox(dialog, position as any, items);
+        const ctrl = self.hooks.pyui.createComboBox(dialog, position as any, items);
+        return wrapControl(ctrl);
       },
       create_list_box: (position: unknown, items: string[]) => {
-        return self.hooks.pyui.createListBox(dialog, position as any, items);
+        const ctrl = self.hooks.pyui.createListBox(dialog, position as any, items);
+        return wrapControl(ctrl);
       },
       create_ok_button: (position: unknown) => {
-        return self.hooks.pyui.createOkButton(dialog, position as any);
+        const ctrl = self.hooks.pyui.createOkButton(dialog, position as any);
+        return wrapControl(ctrl);
       },
       create_cancel_button: (position: unknown) => {
-        return self.hooks.pyui.createCancelButton(dialog, position as any);
+        const ctrl = self.hooks.pyui.createCancelButton(dialog, position as any);
+        return wrapControl(ctrl);
       },
       create_align: (columns: unknown[]) => {
         self.hooks.pyui.createAlign(dialog, columns as any);

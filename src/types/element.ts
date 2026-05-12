@@ -46,7 +46,7 @@ export interface DialogHandle {
 
 export type ControlHandle =
   | { _type: 'control'; id: string; controlType: string; value: unknown }
-  | { _type: 'button'; id: string; controlType: 'ok' | 'cancel'; }
+  | { _type: 'button'; id: string; controlType: 'button' | 'ok' | 'cancel'; value?: string }
   | { _type: 'text_box'; id: string; controlType: 'text_box'; value: string }
   | { _type: 'check_box'; id: string; controlType: 'check_box'; checked: boolean }
   | { _type: 'combo_box'; id: string; controlType: 'combo_box'; selectedIndex: number }
@@ -114,10 +114,10 @@ export interface PythaUIHooks {
   parseLength(text: string): number | undefined;
   formatNumber(value: number): string;
   parseNumber(text: string): number | undefined;
-  runModalDialog<T>(
-    initFunc: (dialog: DialogHandle, data: T) => void,
-    data: T
-  ): Promise<T>;
+  runModalDialog(
+    initFunc: (dialog: DialogHandle, data: unknown) => void,
+    data: unknown
+  ): void;
 
   createDialog(): DialogHandle;
   setWindowTitle(dialog: DialogHandle, title: string): void;
@@ -131,7 +131,7 @@ export interface PythaUIHooks {
   createCancelButton(dialog: DialogHandle, position: number | Vector2): ControlHandle;
   setOnChangeHandler(control: ControlHandle, handler: (value: unknown) => void): void;
   setOnClickHandler(control: ControlHandle, handler: () => void): void;
-  runModalSubdialog<T, R>(parentDialog: DialogHandle, initFunc: (dialog: DialogHandle, data: T) => void, data: T): Promise<R>;
+  runModalSubdialog(parentDialog: DialogHandle, initFunc: (dialog: DialogHandle, data: unknown) => void, data: unknown): void;
   endModalCancel(dialog: DialogHandle): void;
   setControlText(control: ControlHandle, text: string): void;
   setControlChecked(control: ControlHandle, checked: boolean): void;
