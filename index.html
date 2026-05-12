@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pytha Runtime</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      background: #1a1a1a;
+      color: #e0e0e0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    #app {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    #editor-panel {
+      width: 40%;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid #333;
+    }
+
+    #editor-toolbar {
+      background: #252525;
+      padding: 12px;
+      display: flex;
+      gap: 8px;
+      border-bottom: 1px solid #333;
+    }
+
+    #editor-toolbar button {
+      background: #3a3a3a;
+      color: #e0e0e0;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      transition: background 0.2s;
+    }
+
+    #editor-toolbar button:hover {
+      background: #4a4a4a;
+    }
+
+    #editor-toolbar button.primary {
+      background: #0066cc;
+    }
+
+    #editor-toolbar button.primary:hover {
+      background: #0077dd;
+    }
+
+    #lua-editor {
+      flex: 1;
+      background: #1e1e1e;
+      color: #d4d4d4;
+      font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+      font-size: 14px;
+      padding: 16px;
+      border: none;
+      resize: none;
+      outline: none;
+      line-height: 1.5;
+    }
+
+    #output-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+
+    #three-container {
+      flex: 1;
+      background: #f0f0f0;
+    }
+
+    #log-panel {
+      height: 200px;
+      background: #252525;
+      border-top: 1px solid #333;
+      overflow-y: auto;
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 12px;
+      padding: 8px;
+    }
+
+    .log-entry {
+      padding: 2px 0;
+      color: #aaa;
+    }
+
+    .log-entry.error {
+      color: #ff6b6b;
+    }
+
+    .log-entry.info {
+      color: #69dbff;
+    }
+
+    .pytha-dialog {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: #2a2a2a;
+      border-radius: 8px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+      min-width: 300px;
+      max-width: 500px;
+      z-index: 1000;
+    }
+
+    .pytha-dialog-title {
+      background: #1a1a1a;
+      padding: 12px 16px;
+      border-radius: 8px 8px 0 0;
+      font-weight: 600;
+    }
+
+    .pytha-dialog-content {
+      padding: 16px;
+    }
+
+    .pytha-dialog-footer {
+      padding: 12px 16px;
+      border-top: 1px solid #333;
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+
+    .pytha-dialog-button {
+      padding: 8px 16px;
+      border-radius: 4px;
+      border: none;
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    .pytha-dialog-ok {
+      background: #0066cc;
+      color: white;
+    }
+
+    .pytha-dialog-cancel {
+      background: #3a3a3a;
+      color: #e0e0e0;
+    }
+
+    .pytha-control {
+      margin-bottom: 12px;
+    }
+
+    .pytha-input {
+      width: 100%;
+      padding: 8px 12px;
+      background: #1a1a1a;
+      border: 1px solid #444;
+      border-radius: 4px;
+      color: #e0e0e0;
+      font-size: 14px;
+    }
+
+    .pytha-input:focus {
+      outline: none;
+      border-color: #0066cc;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="editor-panel">
+      <div id="editor-toolbar">
+        <button class="primary" id="run-btn">Run</button>
+        <button id="clear-btn">Clear Scene</button>
+        <button id="sample-btn">Load Sample</button>
+      </div>
+      <textarea id="lua-editor" placeholder="Enter Pytha Lua code here...">
+-- Example: Create geometry with Fengari (full Lua 5.3 support)
+function main()
+    local size = 100
+
+    -- Create multiple blocks in a loop
+    for i = 1, 5 do
+        local block = pytha.create_block(size, size, size, {i * 120, 0, 0})
+        pytha.set_element_name(block, "Block " .. i)
+    end
+
+    -- Create a cylinder
+    local cyl = pytha.create_cylinder(150, 50, {0, 100, 0})
+    pytha.set_element_pen(cyl, 2)
+
+    pyui.alert("Created 6 elements!")
+end</textarea>
+      <div id="log-panel"></div>
+    </div>
+    <div id="output-panel">
+      <div id="three-container"></div>
+    </div>
+  </div>
+
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>
