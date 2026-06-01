@@ -79,6 +79,7 @@ function initLuaVM(): LuaState {
   const state: LuaState = {
     execute(code: string) {
       const result = lauxlib.luaL_dostring(L, to_luastring_(code));
+      console.log(`The result is : ${result} and ${lua.LUA_OK}`)
       if (result !== lua.LUA_OK) {
         const error = to_jsstring_(lauxlib.luaL_tolstring(L, -1)!);
         lua.lua_pop(L, 1);
@@ -168,90 +169,96 @@ function initLuaVM(): LuaState {
   state.setGlobal('pytha', {
     create_block: (length: number, width: number, height: number, origin?: [number, number, number], options?: Record<string, unknown>) => {
       const id = randomUUID();
-      const handle = { _type: 'element', id, elementType: 'block', data: { length, width, height, origin, options } };
-      broadcastRender('create', 'block', { handle, length, width, height, origin, options });
-      return handle;
+      console.log("creating block")
+      broadcastRender('create', 'block', { id, length, width, height, origin, options });
+      return 1;
     },
     create_cylinder: (height: number, radius: number, origin?: [number, number, number], options?: Record<string, unknown>) => {
       const id = randomUUID();
-      const handle = { _type: 'element', id, elementType: 'cylinder', data: { height, radius, origin, options } };
-      broadcastRender('create', 'cylinder', { handle, height, radius, origin, options });
-      return handle;
+      broadcastRender('create', 'cylinder', { id, height, radius, origin, options });
+      return 1;
     },
     create_sphere: (radius: number, origin?: [number, number, number], options?: Record<string, unknown>) => {
       const id = randomUUID();
-      const handle = { _type: 'element', id, elementType: 'sphere', data: { radius, origin, options } };
-      broadcastRender('create', 'sphere', { handle, radius, origin, options });
-      return handle;
+      broadcastRender('create', 'sphere', { id, radius, origin, options });
+      return 1;
     },
     create_polygon: (points: [number, number][]) => {
       const id = randomUUID();
-      const handle = { _type: 'element', id, elementType: 'polygon', data: { points } };
-      broadcastRender('create', 'polygon', { handle, points });
-      return handle;
+      broadcastRender('create', 'polygon', { id, points });
+      return 1;
     },
     create_polyline: (closed: boolean, points: [number, number][]) => {
       const id = randomUUID();
-      const handle = { _type: 'element', id, elementType: 'polyline', data: { closed, points } };
-      broadcastRender('create', 'polyline', { handle, closed, points });
-      return handle;
+      broadcastRender('create', 'polyline', { id, closed, points });
+      return 1;
     },
     create_group: (elements: unknown[], options?: { name?: string }) => {
       const id = randomUUID();
-      const handle = { _type: 'element', id, elementType: 'group', data: { elements, options } };
-      broadcastRender('create', 'group', { handle, elements, options });
-      return handle;
+      broadcastRender('create', 'group', { id, options });
+      return 1;
     },
     delete_element: (element: { id: string }) => {
-      broadcastRender('delete', 'block', { handle: element });
+      broadcastRender('delete', 'block', { id: element.id });
+      return 1;
     },
     copy_element: (element: { id: string }, offset: [number, number, number]) => {
       const id = randomUUID();
-      const handle = { _type: 'element', id, elementType: (element as { elementType?: string }).elementType || 'block', data: { element, offset } };
-      broadcastRender('create', 'block', { handle, offset });
-      return handle;
+      broadcastRender('create', 'block', { id, offset });
+      return 1;
     },
     move_element: (element: { id: string }, offset: [number, number, number]) => {
-      broadcastRender('update', 'block', { handle: element, offset });
+      broadcastRender('update', 'block', { id: element.id, offset });
+      return 1;
     },
     rotate_element: (element: { id: string }, origin: [number, number, number], axis: string, angle: number) => {
-      broadcastRender('update', 'block', { handle: element, origin, axis, angle });
+      broadcastRender('update', 'block', { id: element.id, origin, axis, angle });
+      return 1;
     },
     mirror_element: (element: { id: string }, origin: [number, number, number], axis: string) => {
-      broadcastRender('update', 'block', { handle: element, origin, axis });
+      broadcastRender('update', 'block', { id: element.id, origin, axis });
+      return 1;
     },
     set_element_name: (element: { id: string }, name: string) => {
-      broadcastRender('update', 'block', { handle: element, name });
+      broadcastRender('update', 'block', { id: element.id, name });
+      return 1;
     },
     set_element_pen: (element: { id: string }, penIndex: number) => {
-      broadcastRender('update', 'block', { handle: element, penIndex });
+      broadcastRender('update', 'block', { id: element.id, penIndex });
+      return 1;
     },
     set_element_material: (element: { id: string }, material: unknown) => {
-      broadcastRender('update', 'block', { handle: element, material });
+      broadcastRender('update', 'block', { id: element.id, material });
+      return 1;
     },
     set_element_layer: (element: { id: string }, layer: unknown) => {
-      broadcastRender('update', 'block', { handle: element, layer });
+      broadcastRender('update', 'block', { id: element.id, layer });
+      return 1;
     },
     set_element_group: (element: { id: string }, group: unknown) => {
-      broadcastRender('update', 'block', { handle: element, group });
+      broadcastRender('update', 'block', { id: element.id, group });
+      return 1;
     },
     set_element_history: (element: { id: string }, data: unknown, key: string) => {
+      return 1;
     },
     get_element_history: (element: { id: string }, key: string) => {
-      return undefined;
+      return 1;
     },
     get_group_descendants: (group: { children?: unknown[] }) => {
-      return group.children || [];
+      return 1;
     },
     boole_part_union: (elements: unknown[]) => {
-      return elements[0];
+      return 1;
     },
     get_length_unit: () => 1.0,
   });
 
   state.setGlobal('pyui', {
     alert: (message: string) => {
+      message = to_jsstring(lua.lua_tostring(L, 1));
       broadcastLog('info', `[PYUI] ${message}`);
+      return 1;
     },
     wait: (milliseconds: number) => {
       return new Promise(resolve => setTimeout(resolve, milliseconds));
@@ -385,6 +392,7 @@ function broadcastLog(level: LogMessage['level'], message: string) {
   clients.forEach(ws => {
     try {
       if (ws.readyState === WebSocket.OPEN) {
+        console.log(msg)
         ws.send(JSON.stringify(msg));
       }
     } catch (e) {
@@ -426,8 +434,6 @@ function handleExecute(clientId: string, code: string) {
   }
 
   try {
-    console.log('Executing Lua code, length:', code.length);
-    console.log('Code:', code);
     const wrappedCode = `
 ${code}
 if main and type(main) == "function" then
