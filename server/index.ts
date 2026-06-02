@@ -9,7 +9,7 @@ import {
   type LogMessage,
 } from './protocol.js';
 
-const PORT = 8080;
+const PORT = 8082;
 
 export interface LuaState {
   execute(code: string): void;
@@ -240,10 +240,8 @@ export function initLuaVM(options: LuaRuntimeOptions = {}): LuaState {
   };
 
   const printFn = (...args: unknown[]) => {
-    console.log('[Lua print] called with args:', JSON.stringify(args));
+    const msg = args.map(a => String(a)).join(' ');
     try {
-      const msg = args.map(a => String(a)).join(' ');
-      console.log('[Lua print] message:', msg);
       emitLog('debug', `[Lua] ${msg}`);
     } catch (e) {
       console.error('[Lua print] broadcast error:', e);
@@ -344,7 +342,7 @@ export function initLuaVM(options: LuaRuntimeOptions = {}): LuaState {
         for (const sourceHandle of sourceHandles) {
           const handle = createElementHandle(sourceHandle.elementType);
           copiedHandles.push(handle);
-          emitRender('create', sourceHandle.elementType, { handle, sourceHandle, offset });
+emitRender('create', sourceHandle.elementType, { handle, sourceHandle, offset });
         }
       }
 
@@ -465,6 +463,7 @@ export function initLuaVM(options: LuaRuntimeOptions = {}): LuaState {
   state.setGlobal('pyui', {
     alert: () => {
       const msg = to_jsstring(lua.lua_tostring(L, 1));
+      console.log('[Server pyui.alert]', msg);
       emitLog('info', `[PYUI] ${msg}`);
       return 1;
     },
@@ -627,7 +626,6 @@ function broadcastLog(level: LogMessage['level'], message: string) {
   clients.forEach(ws => {
     try {
       if (ws.readyState === WebSocket.OPEN) {
-        console.log(msg)
         ws.send(JSON.stringify(msg));
       }
     } catch (e) {
@@ -663,9 +661,10 @@ function broadcastUICreate(dialogId: string, controls: UICreateMessage['controls
 }
 
 function handleExecute(clientId: string, code: string) {
+  console.log('[Server handleExecute] called with code:', code.substring(0, 100));
   if (!L) {
+    console.log('[Server handleExecute] creating new Lua VM');
     L = initLuaVM();
-    broadcastLog('info', 'Lua VM initialized');
   }
 
   try {
@@ -675,9 +674,9 @@ if main and type(main) == "function" then
   main()
 end
 `;
-    console.log('Wrapped code:', wrappedCode);
+    console.log('[Server handleExecute] executing wrapped code:', wrappedCode.substring(0, 200));
     L.execute(wrappedCode);
-    console.log('Execute completed successfully');
+    console.log('[Server handleExecute] execute completed');
     const msg = createMessage<ServerMessage>('result', { success: true } as any);
     const client = clients.get(clientId);
     if (client && client.readyState === WebSocket.OPEN) {
@@ -700,7 +699,8 @@ export function startServer() {
     const clientId = randomUUID();
     clients.set(clientId, ws);
 
-    console.log('Client connected:', clientId);
+    console.log('[Server] client connected:', clientId);
+    console.log('Lua VM running, ready for code');
 
     if (!L) {
       L = initLuaVM();
@@ -708,13 +708,16 @@ export function startServer() {
     }
 
     ws.on('message', (data) => {
+      console.log('[Server] message received');
       try {
         const str = Buffer.isBuffer(data) ? data.toString() : String(data);
-        console.log('Received:', str.substring(0, 100));
+        console.log('[Server] data:', str.substring(0, 100));
         const message = JSON.parse(str) as ClientMessage;
 
         switch (message.type) {
           case 'execute':
+            console.log('[Server] matched execute case, message.type =', message.type);
+            console.log('[Server] calling handleExecute now');
             handleExecute(clientId, (message as any).code);
             break;
           case 'ui_event':
@@ -746,6 +749,11 @@ export function startServer() {
   return wss;
 }
 
+console.log('[Server] NODE_ENV:', process.env.NODE_ENV);
+
 if (process.env.NODE_ENV !== 'test') {
+  console.log('[Server] Starting server (NODE_ENV is not test)');
   startServer();
+} else {
+  console.log('[Server] Skipping server start (NODE_ENV is test)');
 }

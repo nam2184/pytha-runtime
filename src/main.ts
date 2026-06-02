@@ -7,7 +7,7 @@ import type {
   LogMessage,
 } from '../server/protocol';
 
-const WS_URL = 'ws://localhost:8080';
+const WS_URL = `ws://localhost:${import.meta.env.VITE_WS_PORT ?? '8081'}`;
 
 interface ElementHandle {
   _type: 'element';
@@ -32,10 +32,77 @@ const registry = new Map<string, THREE.Object3D>();
 let ws: WebSocket;
 let reconnectAttempts = 0;
 const MAX_RECONNECT = 5;
+const UNIT_SCALE = 0.1;
+
+function scaleValue(value: unknown) {
+  return typeof value === 'number' ? value * UNIT_SCALE : 0;
+}
+
+function scaleVector3(vector: [number, number, number] | undefined): [number, number, number] {
+  return [
+    (vector?.[0] ?? 0) * UNIT_SCALE,
+    (vector?.[1] ?? 0) * UNIT_SCALE,
+    (vector?.[2] ?? 0) * UNIT_SCALE,
+  ];
+}
+
+function scalePoint(point: number[]) {
+  return [
+    (point[0] ?? 0) * UNIT_SCALE,
+    (point[1] ?? 0) * UNIT_SCALE,
+    (point[2] ?? 0) * UNIT_SCALE,
+  ] as [number, number, number];
+}
+
+function createAxisHelpers() {
+  const group = new THREE.Group();
+  group.renderOrder = 998;
+
+  const arrowX = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0, 0), 50, 0xff0000, 3, 2);
+  const arrowY = new THREE.ArrowHelper(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 0), 50, 0x00ff00, 3, 2);
+  const arrowZ = new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, 0), 50, 0x0000ff, 3, 2);
+  group.add(arrowX, arrowY, arrowZ);
+
+  return group;
+}
+
+function createGridHelper() {
+  const group = new THREE.Group();
+  group.renderOrder = 999;
+
+  const xzGrid = new THREE.GridHelper(500, 50, 0xffffff, 0xcccccc);
+  const xzMaterial = (xzGrid as THREE.Mesh).material as THREE.Material;
+  xzMaterial.depthTest = false;
+  xzMaterial.depthWrite = false;
+  xzMaterial.transparent = true;
+  xzMaterial.opacity = 0.5;
+  group.add(xzGrid);
+
+  return group;
+}
+
+function addSceneHelpers() {
+  scene.add(new THREE.AmbientLight(0xffffff, 1));
+
+  const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+  directionalLight.position.set(100, 100, 100);
+  scene.add(directionalLight);
+
+  scene.add(createGridHelper());
+  scene.add(createAxisHelpers());
+}
+
+function clearScene() {
+  while (scene.children.length > 0) {
+    scene.remove(scene.children[0]);
+  }
+  addSceneHelpers();
+  registry.clear();
+}
 
 function initThreeJS() {
   scene = new THREE.Scene();
-  scene.background = new THREE.Color(0xf0f0f0);
+  scene.background = new THREE.Color(0x000000);
 
   camera = new THREE.PerspectiveCamera(50, container.clientWidth / container.clientHeight, 0.1, 5000);
   camera.position.set(300, 200, 300);
@@ -52,16 +119,17 @@ function initThreeJS() {
   controls.minDistance = 10;
   controls.maxDistance = 2000;
   controls.maxPolarAngle = Math.PI;
+  controls.mouseButtons = {
+    LEFT: THREE.MOUSE.ROTATE,
+    MIDDLE: THREE.MOUSE.PAN,
+    RIGHT: THREE.MOUSE.ROTATE,
+  };
+  controls.touches = {
+    ONE: THREE.TOUCH.ROTATE,
+    TWO: THREE.TOUCH.DOLLY_PAN,
+  };
 
-  const ambientLight = new THREE.AmbientLight(0xffffff, 1);
-  scene.add(ambientLight);
-
-  const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
-  directionalLight.position.set(100, 100, 100);
-  scene.add(directionalLight);
-
-  const gridHelper = new THREE.GridHelper(500, 50);
-  scene.add(gridHelper);
+  addSceneHelpers();
 
   window.addEventListener('resize', onWindowResize);
 
@@ -95,14 +163,15 @@ function connect() {
 
   ws.onopen = () => {
     appendLog('Connected to Pytha server', 'info');
+    console.log('[Client] WebSocket connected, readyState:', ws.readyState);
     reconnectAttempts = 0;
-    appendLog('WebSocket readyState: ' + ws.readyState, 'debug');
   };
 
   ws.onmessage = (event) => {
     try {
-      appendLog('Received: ' + event.data.toString().substring(0, 100), 'debug');
-      const msg = JSON.parse(event.data) as ServerMessage;
+      const raw = event.data.toString();
+      appendLog('Received: ' + raw.substring(0, 100), 'debug');
+      const msg = JSON.parse(raw) as ServerMessage;
       handleMessage(msg);
     } catch (err) {
       appendLog(`Failed to parse message: ${err}`, 'error');
@@ -171,6 +240,9 @@ function getMaterial(penIndex: number): THREE.Material {
     color: colors[penIndex % colors.length],
     roughness: 0.5,
     metalness: 0.1,
+    transparent: true,
+    opacity: 0.9,
+    depthWrite: false,
   });
 }
 
@@ -181,13 +253,17 @@ function handleRender(msg: RenderMessage) {
   switch (msg.action) {
     case 'create':
       if (msg.elementType === 'block') {
-        const geo = new THREE.BoxGeometry(data.length as number, data.width as number, data.height as number);
+        const w = scaleValue(data.length);
+        const h = scaleValue(data.height);
+        const d = scaleValue(data.width);
+        const geo = new THREE.BoxGeometry(w, h, d);
         const mat = getMaterial((data.options as any)?.pen ?? 0);
         const mesh = new THREE.Mesh(geo, mat);
 
         const origin = data.origin as [number, number, number] | undefined;
         if (origin) {
-          mesh.position.set(origin[0] || 0, origin[1] || 0, origin[2] || 0);
+          const scaled = scaleVector3(origin);
+          mesh.position.set(scaled[0] + w / 2, scaled[1] + h / 2, scaled[2] + d / 2);
         }
 
         mesh.name = (data.options as any)?.name || `Block_${data.length}x${data.width}x${data.height}`;
@@ -197,13 +273,16 @@ function handleRender(msg: RenderMessage) {
         registry.set(handle.id, mesh);
       }
       else if (msg.elementType === 'cylinder') {
-        const geo = new THREE.CylinderGeometry(data.radius as number, data.radius as number, data.height as number, 32);
+        const radius = scaleValue(data.radius);
+        const h = scaleValue(data.height);
+        const geo = new THREE.CylinderGeometry(radius, radius, h, 32);
         const mat = getMaterial((data.options as any)?.pen ?? 0);
         const mesh = new THREE.Mesh(geo, mat);
 
         const origin = data.origin as [number, number, number] | undefined;
         if (origin) {
-          mesh.position.set(origin[0] || 0, origin[1] || 0, origin[2] || 0);
+          const scaled = scaleVector3(origin);
+          mesh.position.set(scaled[0] + radius, scaled[1] + h / 2, scaled[2] + radius);
         }
 
         mesh.name = `Cylinder_${data.height}x${data.radius}`;
@@ -213,13 +292,13 @@ function handleRender(msg: RenderMessage) {
         registry.set(handle.id, mesh);
       }
       else if (msg.elementType === 'sphere') {
-        const geo = new THREE.SphereGeometry(data.radius as number, 32, 16);
+        const geo = new THREE.SphereGeometry(scaleValue(data.radius), 32, 16);
         const mat = getMaterial((data.options as any)?.pen ?? 0);
         const mesh = new THREE.Mesh(geo, mat);
 
         const origin = data.origin as [number, number, number] | undefined;
         if (origin) {
-          mesh.position.set(origin[0] || 0, origin[1] || 0, origin[2] || 0);
+          mesh.position.set(...scaleVector3(origin));
         }
 
         mesh.name = `Sphere_${data.radius}`;
@@ -230,17 +309,31 @@ function handleRender(msg: RenderMessage) {
       }
       else if (msg.elementType === 'polygon') {
         const shape = new THREE.Shape();
-        const points = data.points as [number, number][];
-        if (points.length >= 2) {
-          shape.moveTo(points[0][0], points[0][1]);
-          for (let i = 1; i < points.length; i++) {
-            shape.lineTo(points[i][0], points[i][1]);
+        const points = data.points as number[][];
+        const scaledPoints = points.map(p => scalePoint(p));
+        if (scaledPoints.length >= 2) {
+          const first = scaledPoints[0];
+          shape.moveTo(first[0], first[1]);
+          for (let i = 1; i < scaledPoints.length; i++) {
+            const point = scaledPoints[i];
+            shape.lineTo(point[0], point[1]);
           }
           shape.closePath();
         }
         const geo = new THREE.ShapeGeometry(shape);
         const mat = getMaterial(0);
         const mesh = new THREE.Mesh(geo, mat);
+
+        let cx = 0, cy = 0;
+        for (const p of scaledPoints) { cx += p[0]; cy += p[1]; }
+        cx /= scaledPoints.length;
+        cy /= scaledPoints.length;
+
+        const origin = data.origin as [number, number, number] | undefined;
+        if (origin) {
+          const scaled = scaleVector3(origin);
+          mesh.position.set(scaled[0] + cx, scaled[1] + cy, scaled[2]);
+        }
         mesh.userData.handle = handle;
 
         scene.add(mesh);
@@ -248,10 +341,10 @@ function handleRender(msg: RenderMessage) {
       }
       else if (msg.elementType === 'polyline') {
         const geometry = new THREE.BufferGeometry();
-        const points = data.points as [number, number][];
+        const points = data.points as number[][];
         const positions: number[] = [];
         for (const p of points) {
-          positions.push(p[0], p[1], 0);
+          positions.push(...scalePoint(p));
         }
         geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
 
@@ -259,6 +352,10 @@ function handleRender(msg: RenderMessage) {
         const line = closed
           ? new THREE.LineLoop(geometry, new THREE.LineBasicMaterial({ color: 0x000000 }))
           : new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({ color: 0x000000 }));
+        const origin = data.origin as [number, number, number] | undefined;
+        if (origin) {
+          line.position.set(...scaleVector3(origin));
+        }
 
         scene.add(line);
         registry.set(handle.id, line);
@@ -283,9 +380,10 @@ function handleRender(msg: RenderMessage) {
       if (obj) {
         if (data.offset) {
           const offset = data.offset as [number, number, number];
-          obj.position.x += offset[0] || 0;
-          obj.position.y += offset[1] || 0;
-          obj.position.z += offset[2] || 0;
+          const scaledOffset = scaleVector3(offset);
+          obj.position.x += scaledOffset[0];
+          obj.position.y += scaledOffset[1];
+          obj.position.z += scaledOffset[2];
         }
         if (data.name) {
           obj.name = data.name as string;
@@ -313,9 +411,7 @@ function handleRender(msg: RenderMessage) {
       while (scene.children.length > 0) {
         scene.remove(scene.children[0]);
       }
-      scene.add(new THREE.AmbientLight(0xffffff, 1));
-      scene.add(new THREE.DirectionalLight(0xffffff, 1));
-      scene.add(new THREE.GridHelper(500, 50));
+      addSceneHelpers();
       registry.clear();
       break;
   }
@@ -479,12 +575,15 @@ runBtn.addEventListener('click', () => {
     return;
   }
 
+  console.log('[Client] ws readyState:', ws ? ws.readyState : 'ws is null');
+
   if (!ws || ws.readyState !== WebSocket.OPEN) {
     appendLog('Not connected to server (readyState: ' + (ws ? ws.readyState : 'no ws') + ')', 'error');
+    console.log('[Client] Cannot send - WebSocket not open, state:', ws?.readyState);
     return;
   }
 
-  appendLog('Sending Lua code...', 'info');
+  clearScene();
 
   const executeMsg = {
     type: 'execute',
@@ -492,26 +591,70 @@ runBtn.addEventListener('click', () => {
     id: `exec_${Date.now()}`,
     timestamp: Date.now(),
   };
-  appendLog('Sending: ' + JSON.stringify(executeMsg).substring(0, 100), 'debug');
+  console.log('[Client] Sending execute message:', JSON.stringify(executeMsg).substring(0, 80));
   ws.send(JSON.stringify(executeMsg));
+  console.log('[Client] Message sent');
 });
 
 clearBtn.addEventListener('click', () => {
-  send({
-    type: 'render',
-    action: 'clear',
-    elementType: 'block',
-    data: {},
-  });
+  clearScene();
 });
 
 sampleBtn.addEventListener('click', () => {
-  const sampleCode = `-- Pytha Lua Code
+  const sampleCode = `-- Cabinet sample
 function main()
-    pyui.alert("Hello from Pytha!")
+    local width = 600
+    local depth = 400
+    local height = 800
+    local panel = 18
+    local back = 8
 
-    local block = pytha.create_block(100, 100, 100, {0, 0, 0})
-    pytha.set_element_name(block, "My Block")
+    local left = pytha.create_block(panel, depth, height, {0, 0, 0})
+    pytha.set_element_name(left, "Left side")
+    pytha.set_element_pen(left, 3)
+
+    local right = pytha.create_block(panel, depth, height, {width - panel, 0, 0})
+    pytha.set_element_name(right, "Right side")
+    pytha.set_element_pen(right, 3)
+
+    local bottom = pytha.create_block(width, depth, panel, {0, 0, 0})
+    pytha.set_element_name(bottom, "Bottom")
+    pytha.set_element_pen(bottom, 4)
+
+    local top = pytha.create_block(width, depth, panel, {0, 0, height - panel})
+    pytha.set_element_name(top, "Top")
+    pytha.set_element_pen(top, 4)
+
+    local back_panel = pytha.create_block(width, back, height, {0, depth - back, 0})
+    pytha.set_element_name(back_panel, "Back panel")
+    pytha.set_element_pen(back_panel, 8)
+
+    local shelf1 = pytha.create_block(width - panel * 2, depth - back, panel, {panel, 0, height * 0.35 - panel / 2})
+    pytha.set_element_name(shelf1, "Lower shelf")
+    pytha.set_element_pen(shelf1, 5)
+
+    local shelf2 = pytha.create_block(width - panel * 2, depth - back, panel, {panel, 0, height * 0.65 - panel / 2})
+    pytha.set_element_name(shelf2, "Upper shelf")
+    pytha.set_element_pen(shelf2, 5)
+
+    local left_door = pytha.create_block((width / 2) - 4, panel, height - panel * 2, {0, -panel, panel})
+    pytha.set_element_name(left_door, "Left door")
+    pytha.set_element_pen(left_door, 6)
+
+    local right_door = pytha.create_block((width / 2) - 4, panel, height - panel * 2, {(width / 2) + 4, -panel, panel})
+    pytha.set_element_name(right_door, "Right door")
+    pytha.set_element_pen(right_door, 6)
+
+    local handle_left = pytha.create_block(12, 12, 120, {(width / 2) - 40, -panel - 12, height / 2})
+    pytha.set_element_name(handle_left, "Left handle")
+    pytha.set_element_pen(handle_left, 2)
+
+    local handle_right = pytha.create_block(12, 12, 120, {(width / 2) + 28, -panel - 12, height / 2})
+    pytha.set_element_name(handle_right, "Right handle")
+    pytha.set_element_pen(handle_right, 2)
+
+    pytha.create_group({left, right, bottom, top, back_panel, shelf1, shelf2, left_door, right_door, handle_left, handle_right}, {name = "Sample cabinet"})
+    pyui.alert("Created sample cabinet - bottom-left-front at origin")
 end`;
 
   luaEditor.value = sampleCode;
