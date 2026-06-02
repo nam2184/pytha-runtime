@@ -33,9 +33,11 @@ This starts:
 - **Server**: `tsx watch server/index.ts` on port 8080
 - **Client**: `vite` on port 3000
 
-Open `http://localhost:3000` to use the editor.
+Open `http://localhost:3001` to use the editor.
 
 ## Lua API
+
+For full API documentation, see [Pytha Lua API Wiki](https://github.com/pytha-3d-cad/pytha-lua-api/wiki).
 
 **pytha.*** - Geometry:
 ```lua

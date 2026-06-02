@@ -11,7 +11,8 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
-    "jsx": "preserve"
+    "jsx": "preserve",
+    "allowImportingTsExtensions": true,
   },
   "include": ["src/**/*", "server/**/*"],
   "exclude": ["node_modules"]

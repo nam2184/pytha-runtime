@@ -11,7 +11,7 @@ import {
 
 const PORT = 8080;
 
-interface LuaState {
+export interface LuaState {
   execute(code: string): void;
   push(value: unknown): void;
   pop(): unknown;
@@ -31,10 +31,23 @@ interface LuaState {
   popHandler: () => void;
 }
 
+export interface LuaRuntimeOptions {
+  onRender?: (action: RenderMessage['action'], elementType: RenderMessage['elementType'], data: Record<string, unknown>) => void;
+  onLog?: (level: LogMessage['level'], message: string) => void;
+  onUICreate?: (dialogId: string, controls: UICreateMessage['controls']) => void;
+  onPythaCall?: (name: string, args: Record<string, unknown>) => void;
+}
+
 let L: LuaState | null = null;
 
 import * as fengari from 'fengari';
-const { lua, lauxlib, lualib, to_luastring, to_jsstring, tojs } = fengari;
+const { lua, lauxlib, lualib, to_luastring, to_jsstring } = fengari;
+
+interface ElementHandle {
+  _type: 'element';
+  id: string;
+  elementType: RenderMessage['elementType'];
+}
 
 function pushValue(L: any, val: unknown): void {
   if (typeof val === 'string') {
@@ -65,13 +78,96 @@ function pushValue(L: any, val: unknown): void {
   }
 }
 
+function luaValueToJs(L: any, idx: number): unknown {
+  const type = lua.lua_type(L, idx);
+
+  if (type === lua.LUA_TNIL || type === lua.LUA_TNONE) {
+    return undefined;
+  }
+
+  if (type === lua.LUA_TBOOLEAN) {
+    return Boolean(lua.lua_toboolean(L, idx));
+  }
+
+  if (type === lua.LUA_TNUMBER) {
+    return lua.lua_tonumber(L, idx);
+  }
+
+  if (type === lua.LUA_TSTRING) {
+    return lua.lua_tojsstring(L, idx);
+  }
+
+  if (type !== lua.LUA_TTABLE) {
+    return undefined;
+  }
+
+  const absIdx = lua.lua_absindex(L, idx);
+  const entries: Array<[unknown, unknown]> = [];
+
+  lua.lua_pushnil(L);
+  while (lua.lua_next(L, absIdx) !== 0) {
+    entries.push([luaValueToJs(L, -2), luaValueToJs(L, -1)]);
+    lua.lua_pop(L, 1);
+  }
+
+  const numericKeys = entries
+    .map(([key]) => key)
+    .filter((key): key is number => typeof key === 'number' && Number.isInteger(key) && key > 0);
+
+  if (numericKeys.length === entries.length) {
+    numericKeys.sort((a, b) => a - b);
+    const isArray = numericKeys.every((key, index) => key === index + 1);
+    if (isArray) {
+      return entries
+        .sort(([a], [b]) => Number(a) - Number(b))
+        .map(([, value]) => value);
+    }
+  }
+
+  const obj: Record<string, unknown> = {};
+  for (const [key, value] of entries) {
+    obj[String(key)] = value;
+  }
+  return obj;
+}
+
+function createElementHandle(elementType: RenderMessage['elementType']): ElementHandle {
+  return { _type: 'element', id: randomUUID(), elementType };
+}
+
+function isElementHandle(value: unknown): value is ElementHandle {
+  return Boolean(
+    value &&
+    typeof value === 'object' &&
+    (value as ElementHandle)._type === 'element' &&
+    typeof (value as ElementHandle).id === 'string'
+  );
+}
+
+function getElementHandles(value: unknown): ElementHandle[] {
+  if (isElementHandle(value)) {
+    return [value];
+  }
+
+  if (Array.isArray(value)) {
+    return value.filter(isElementHandle);
+  }
+
+  return [];
+}
+
 const clients = new Map<string, WebSocket>();
 
 const pendingDialogCallbacks = new Map<string, (data: unknown) => void>();
 
-function initLuaVM(): LuaState {
+export function initLuaVM(options: LuaRuntimeOptions = {}): LuaState {
   const L = lauxlib.luaL_newstate();
   lualib.luaL_openlibs(L);
+
+  const emitRender = options.onRender ?? broadcastRender;
+  const emitLog = options.onLog ?? broadcastLog;
+  const emitUICreate = options.onUICreate ?? broadcastUICreate;
+  const emitPythaCall = options.onPythaCall ?? (() => {});
 
   const to_luastring_: (s: string) => any = to_luastring;
   const to_jsstring_: (s: any) => string = to_jsstring;
@@ -79,7 +175,6 @@ function initLuaVM(): LuaState {
   const state: LuaState = {
     execute(code: string) {
       const result = lauxlib.luaL_dostring(L, to_luastring_(code));
-      console.log(`The result is : ${result} and ${lua.LUA_OK}`)
       if (result !== lua.LUA_OK) {
         const error = to_jsstring_(lauxlib.luaL_tolstring(L, -1)!);
         lua.lua_pop(L, 1);
@@ -91,7 +186,7 @@ function initLuaVM(): LuaState {
     },
     pop() {
       const idx = lua.lua_gettop(L);
-      const val = tojs(L, idx);
+      const val = luaValueToJs(L, idx);
       lua.lua_pop(L, 1);
       return val;
     },
@@ -149,7 +244,7 @@ function initLuaVM(): LuaState {
     try {
       const msg = args.map(a => String(a)).join(' ');
       console.log('[Lua print] message:', msg);
-      broadcastLog('debug', `[Lua] ${msg}`);
+      emitLog('debug', `[Lua] ${msg}`);
     } catch (e) {
       console.error('[Lua print] broadcast error:', e);
     }
@@ -167,113 +262,244 @@ function initLuaVM(): LuaState {
   lua.lua_setglobal(L, to_luastring('test'));
 
   state.setGlobal('pytha', {
-    create_block: (length: number, width: number, height: number, origin?: [number, number, number], options?: Record<string, unknown>) => {
-      const id = randomUUID();
-      console.log("creating block")
-      broadcastRender('create', 'block', { id, length, width, height, origin, options });
+    create_block: () => {
+      const length = lua.lua_tonumber(L, 1) ?? 0;
+      const width = lua.lua_tonumber(L, 2) ?? 0;
+      const height = lua.lua_tonumber(L, 3) ?? 0;
+      const origin = luaValueToJs(L, 4);
+      const options = luaValueToJs(L, 5);
+      const handle = createElementHandle('block');
+      emitPythaCall('create_block', { length, width, height, origin, options, result: handle });
+      emitRender('create', 'block', { handle, length, width, height, origin, options });
+      pushValue(L, handle);
       return 1;
     },
-    create_cylinder: (height: number, radius: number, origin?: [number, number, number], options?: Record<string, unknown>) => {
-      const id = randomUUID();
-      broadcastRender('create', 'cylinder', { id, height, radius, origin, options });
+    create_cylinder: () => {
+      const height = lua.lua_tonumber(L, 1) ?? 0;
+      const radius = lua.lua_tonumber(L, 2) ?? 0;
+      const origin = luaValueToJs(L, 3);
+      const options = luaValueToJs(L, 4);
+      const handle = createElementHandle('cylinder');
+      emitPythaCall('create_cylinder', { height, radius, origin, options, result: handle });
+      emitRender('create', 'cylinder', { handle, height, radius, origin, options });
+      pushValue(L, handle);
       return 1;
     },
-    create_sphere: (radius: number, origin?: [number, number, number], options?: Record<string, unknown>) => {
-      const id = randomUUID();
-      broadcastRender('create', 'sphere', { id, radius, origin, options });
+    create_sphere: () => {
+      const radius = lua.lua_tonumber(L, 1) ?? 0;
+      const origin = luaValueToJs(L, 2);
+      const options = luaValueToJs(L, 3);
+      const handle = createElementHandle('sphere');
+      emitPythaCall('create_sphere', { radius, origin, options, result: handle });
+      emitRender('create', 'sphere', { handle, radius, origin, options });
+      pushValue(L, handle);
       return 1;
     },
-    create_polygon: (points: [number, number][]) => {
-      const id = randomUUID();
-      broadcastRender('create', 'polygon', { id, points });
+    create_polygon: () => {
+      const points = luaValueToJs(L, 1);
+      const origin = luaValueToJs(L, 2);
+      const options = luaValueToJs(L, 3);
+      const handle = createElementHandle('polygon');
+      emitPythaCall('create_polygon', { points, origin, options, result: handle });
+      emitRender('create', 'polygon', { handle, points, origin, options });
+      pushValue(L, handle);
       return 1;
     },
-    create_polyline: (closed: boolean, points: [number, number][]) => {
-      const id = randomUUID();
-      broadcastRender('create', 'polyline', { id, closed, points });
+    create_polyline: () => {
+      const type = to_jsstring(lua.lua_tostring(L, 1));
+      const points = luaValueToJs(L, 2);
+      const origin = luaValueToJs(L, 3);
+      const options = luaValueToJs(L, 4);
+      const closed = type === 'closed';
+      const handle = createElementHandle('polyline');
+      emitPythaCall('create_polyline', { type, points, origin, options, result: handle });
+      emitRender('create', 'polyline', { handle, type, closed, points, origin, options });
+      pushValue(L, handle);
       return 1;
     },
-    create_group: (elements: unknown[], options?: { name?: string }) => {
-      const id = randomUUID();
-      broadcastRender('create', 'group', { id, options });
+    create_group: () => {
+      const elements = getElementHandles(luaValueToJs(L, 1));
+      const options = luaValueToJs(L, 2);
+      const handle = createElementHandle('group');
+      emitPythaCall('create_group', { elements, options, result: handle });
+      emitRender('create', 'group', { handle, elements, options });
+      pushValue(L, handle);
       return 1;
     },
-    delete_element: (element: { id: string }) => {
-      broadcastRender('delete', 'block', { id: element.id });
+    delete_element: () => {
+      const elements = getElementHandles(luaValueToJs(L, 1));
+      emitPythaCall('delete_element', { elements });
+      for (const handle of elements) {
+        emitRender('delete', handle.elementType, { handle });
+      }
+      return 0;
+    },
+    copy_element: () => {
+      const sourceHandles = getElementHandles(luaValueToJs(L, 1));
+      const offset = luaValueToJs(L, 2);
+      const copies = lua.lua_tonumber(L, 3) ?? 1;
+      const copiedHandles: ElementHandle[] = [];
+
+      for (let copyIndex = 0; copyIndex < copies; copyIndex++) {
+        for (const sourceHandle of sourceHandles) {
+          const handle = createElementHandle(sourceHandle.elementType);
+          copiedHandles.push(handle);
+          emitRender('create', sourceHandle.elementType, { handle, sourceHandle, offset });
+        }
+      }
+
+      emitPythaCall('copy_element', { elements: sourceHandles, offset, copies, result: copiedHandles });
+      pushValue(L, copiedHandles);
       return 1;
     },
-    copy_element: (element: { id: string }, offset: [number, number, number]) => {
-      const id = randomUUID();
-      broadcastRender('create', 'block', { id, offset });
+    move_element: () => {
+      const elements = getElementHandles(luaValueToJs(L, 1));
+      const offset = luaValueToJs(L, 2);
+      emitPythaCall('move_element', { elements, offset });
+      for (const handle of elements) {
+        emitRender('update', handle.elementType, { handle, offset });
+      }
+      return 0;
+    },
+    rotate_element: () => {
+      const elements = getElementHandles(luaValueToJs(L, 1));
+      const origin = luaValueToJs(L, 2);
+      const axis = luaValueToJs(L, 3);
+      const angle = lua.lua_tonumber(L, 4) ?? 0;
+      emitPythaCall('rotate_element', { elements, origin, axis, angle });
+      for (const handle of elements) {
+        emitRender('update', handle.elementType, { handle, origin, axis, angle });
+      }
+      return 0;
+    },
+    mirror_element: () => {
+      const elements = getElementHandles(luaValueToJs(L, 1));
+      const origin = luaValueToJs(L, 2);
+      const axis = luaValueToJs(L, 3);
+      emitPythaCall('mirror_element', { elements, origin, axis });
+      for (const handle of elements) {
+        emitRender('update', handle.elementType, { handle, origin, axis });
+      }
+      return 0;
+    },
+    set_element_name: () => {
+      const elements = getElementHandles(luaValueToJs(L, 1));
+      const name = to_jsstring(lua.lua_tostring(L, 2));
+      emitPythaCall('set_element_name', { elements, name });
+      for (const handle of elements) {
+        emitRender('update', handle.elementType, { handle, name });
+      }
+      return 0;
+    },
+    set_element_pen: () => {
+      const elements = getElementHandles(luaValueToJs(L, 1));
+      const pen = lua.lua_tonumber(L, 2) ?? 0;
+      emitPythaCall('set_element_pen', { elements, pen });
+      for (const handle of elements) {
+        emitRender('update', handle.elementType, { handle, penIndex: pen });
+      }
+      return 0;
+    },
+    set_element_material: () => {
+      const elements = getElementHandles(luaValueToJs(L, 1));
+      const material = luaValueToJs(L, 2);
+      emitPythaCall('set_element_material', { elements, material });
+      for (const handle of elements) {
+        emitRender('update', handle.elementType, { handle, material });
+      }
+      return 0;
+    },
+    set_element_layer: () => {
+      const elements = getElementHandles(luaValueToJs(L, 1));
+      const layer = luaValueToJs(L, 2);
+      emitPythaCall('set_element_layer', { elements, layer });
+      for (const handle of elements) {
+        emitRender('update', handle.elementType, { handle, layer });
+      }
+      return 0;
+    },
+    set_element_group: () => {
+      const elements = getElementHandles(luaValueToJs(L, 1));
+      const group = luaValueToJs(L, 2);
+      emitPythaCall('set_element_group', { elements, group });
+      for (const handle of elements) {
+        emitRender('update', handle.elementType, { handle, group });
+      }
+      return 0;
+    },
+    set_element_history: () => {
+      const elements = getElementHandles(luaValueToJs(L, 1));
+      const data = luaValueToJs(L, 2);
+      const key = to_jsstring(lua.lua_tostring(L, 3));
+      emitPythaCall('set_element_history', { elements, data, key });
+      return 0;
+    },
+    get_element_history: () => {
+      const element = getElementHandles(luaValueToJs(L, 1))[0];
+      const key = to_jsstring(lua.lua_tostring(L, 2));
+      emitPythaCall('get_element_history', { element, key, result: undefined });
+      lua.lua_pushnil(L);
       return 1;
     },
-    move_element: (element: { id: string }, offset: [number, number, number]) => {
-      broadcastRender('update', 'block', { id: element.id, offset });
+    get_group_descendants: () => {
+      const group = getElementHandles(luaValueToJs(L, 1))[0];
+      const result: ElementHandle[] = [];
+      emitPythaCall('get_group_descendants', { group, result });
+      pushValue(L, result);
       return 1;
     },
-    rotate_element: (element: { id: string }, origin: [number, number, number], axis: string, angle: number) => {
-      broadcastRender('update', 'block', { id: element.id, origin, axis, angle });
+    boole_part_union: () => {
+      const elements = getElementHandles(luaValueToJs(L, 1));
+      emitPythaCall('boole_part_union', { elements, result: undefined });
+      lua.lua_pushnil(L);
       return 1;
     },
-    mirror_element: (element: { id: string }, origin: [number, number, number], axis: string) => {
-      broadcastRender('update', 'block', { id: element.id, origin, axis });
+    get_length_unit: () => {
+      const result = 1.0;
+      emitPythaCall('get_length_unit', { result });
+      lua.lua_pushnumber(L, result);
       return 1;
     },
-    set_element_name: (element: { id: string }, name: string) => {
-      broadcastRender('update', 'block', { id: element.id, name });
-      return 1;
-    },
-    set_element_pen: (element: { id: string }, penIndex: number) => {
-      broadcastRender('update', 'block', { id: element.id, penIndex });
-      return 1;
-    },
-    set_element_material: (element: { id: string }, material: unknown) => {
-      broadcastRender('update', 'block', { id: element.id, material });
-      return 1;
-    },
-    set_element_layer: (element: { id: string }, layer: unknown) => {
-      broadcastRender('update', 'block', { id: element.id, layer });
-      return 1;
-    },
-    set_element_group: (element: { id: string }, group: unknown) => {
-      broadcastRender('update', 'block', { id: element.id, group });
-      return 1;
-    },
-    set_element_history: (element: { id: string }, data: unknown, key: string) => {
-      return 1;
-    },
-    get_element_history: (element: { id: string }, key: string) => {
-      return 1;
-    },
-    get_group_descendants: (group: { children?: unknown[] }) => {
-      return 1;
-    },
-    boole_part_union: (elements: unknown[]) => {
-      return 1;
-    },
-    get_length_unit: () => 1.0,
   });
 
   state.setGlobal('pyui', {
-    alert: (message: string) => {
-      message = to_jsstring(lua.lua_tostring(L, 1));
-      broadcastLog('info', `[PYUI] ${message}`);
+    alert: () => {
+      const msg = to_jsstring(lua.lua_tostring(L, 1));
+      emitLog('info', `[PYUI] ${msg}`);
       return 1;
     },
-    wait: (milliseconds: number) => {
-      return new Promise(resolve => setTimeout(resolve, milliseconds));
+    wait: () => {
+      const ms = lua.lua_tonumber(L, 1) ?? 0;
+      return new Promise(resolve => setTimeout(resolve, ms));
     },
-    format_length: (value: number) => `${value.toFixed(2)} mm`,
-    parse_length: (text: string) => {
+    format_length: () => {
+      const value = lua.lua_tonumber(L, 1) ?? 0;
+      return `${value.toFixed(2)} mm`;
+    },
+    parse_length: () => {
+      const text = to_jsstring(lua.lua_tostring(L, 1));
       const match = text.match(/^([\d.]+)/);
       return match ? parseFloat(match[1]) : undefined;
     },
-    format_number: (value: number) => String(value),
-    parse_number: (text: string) => {
+    format_number: () => {
+      const value = lua.lua_tonumber(L, 1);
+      return String(value);
+    },
+    parse_number: () => {
+      const text = to_jsstring(lua.lua_tostring(L, 1));
       const n = parseFloat(text);
       return isNaN(n) ? undefined : n;
     },
-    run_modal_dialog: (initFunc: (dialog: unknown, data: unknown) => void, data: unknown) => {
+    run_modal_dialog: () => {
+      const initFuncIdx = 1;
+      const dataIdx = 2;
+
+      lua.lua_pushvalue(L, initFuncIdx);
+      const isFunc = lua.lua_isfunction(L, -1);
+      lua.lua_pop(L, 1);
+
+      if (!isFunc) return 0;
+
       const dialogId = randomUUID();
       const controls: UICreateMessage['controls'] = [];
       const dialogProxy = {
@@ -325,8 +551,17 @@ function initLuaVM(): LuaState {
         },
       };
 
-      initFunc(dialogProxy, data);
-      broadcastUICreate(dialogId, controls);
+      lua.lua_pushvalue(L, dataIdx);
+      const data = luaValueToJs(L, -1);
+      lua.lua_pop(L, 1);
+
+      lua.lua_pushvalue(L, initFuncIdx);
+      pushValue(L, dialogProxy);
+      pushValue(L, data);
+      lua.lua_call(L, 2, 0);
+
+      emitUICreate(dialogId, controls);
+      return 0;
     },
     end_modal_cancel: () => {
     },
@@ -458,52 +693,59 @@ end
   }
 }
 
-const wss = new WebSocketServer({ port: PORT });
+export function startServer() {
+  const wss = new WebSocketServer({ port: PORT });
 
-wss.on('connection', (ws) => {
-  const clientId = randomUUID();
-  clients.set(clientId, ws);
+  wss.on('connection', (ws) => {
+    const clientId = randomUUID();
+    clients.set(clientId, ws);
 
-  console.log('Client connected:', clientId);
+    console.log('Client connected:', clientId);
 
-  if (!L) {
-    L = initLuaVM();
-    console.log('Lua VM initialized');
-  }
-
-  ws.on('message', (data) => {
-    try {
-      const str = Buffer.isBuffer(data) ? data.toString() : String(data);
-      console.log('Received:', str.substring(0, 100));
-      const message = JSON.parse(str) as ClientMessage;
-
-      switch (message.type) {
-        case 'execute':
-          handleExecute(clientId, (message as any).code);
-          break;
-        case 'ui_event':
-          const key = `${message.eventType}:${message.dialogId}:${message.controlId}`;
-          const callback = pendingDialogCallbacks.get(key);
-          if (callback) {
-            callback(message.value);
-          }
-          break;
-      }
-    } catch (err) {
-      console.error('Message error:', err);
-      const errorMsg = createMessage<ServerMessage>('error', { message: err instanceof Error ? err.message : String(err) } as any);
-      ws.send(JSON.stringify(errorMsg));
+    if (!L) {
+      L = initLuaVM();
+      console.log('Lua VM initialized');
     }
+
+    ws.on('message', (data) => {
+      try {
+        const str = Buffer.isBuffer(data) ? data.toString() : String(data);
+        console.log('Received:', str.substring(0, 100));
+        const message = JSON.parse(str) as ClientMessage;
+
+        switch (message.type) {
+          case 'execute':
+            handleExecute(clientId, (message as any).code);
+            break;
+          case 'ui_event':
+            const key = `${message.eventType}:${message.dialogId}:${message.controlId}`;
+            const callback = pendingDialogCallbacks.get(key);
+            if (callback) {
+              callback(message.value);
+            }
+            break;
+        }
+      } catch (err) {
+        console.error('Message error:', err);
+        const errorMsg = createMessage<ServerMessage>('error', { message: err instanceof Error ? err.message : String(err) } as any);
+        ws.send(JSON.stringify(errorMsg));
+      }
+    });
+
+    ws.on('close', () => {
+      clients.delete(clientId);
+      console.log('Client disconnected:', clientId);
+    });
+
+    ws.on('error', (err) => {
+      console.error('WebSocket error:', err);
+    });
   });
 
-  ws.on('close', () => {
-    clients.delete(clientId);
-    console.log('Client disconnected:', clientId);
-  });
+  console.log(`Pytha WebSocket server running on ws://localhost:${PORT}`);
+  return wss;
+}
 
-  ws.on('error', (err) => {
-    console.error('WebSocket error:', err);
-  });
-});
-
-console.log(`Pytha WebSocket server running on ws://localhost:${PORT}`);
+if (process.env.NODE_ENV !== 'test') {
+  startServer();
+}

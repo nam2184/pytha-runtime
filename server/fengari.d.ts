@@ -2,6 +2,8 @@ declare module 'fengari' {
   export const lua: {
     lua_gettop: (L: any) => number;
     lua_settop: (L: any, idx: number) => void;
+    lua_absindex: (L: any, idx: number) => number;
+    lua_type: (L: any, idx: number) => number;
     lua_pushstring: (L: any, s: any) => void;
     lua_pushnumber: (L: any, n: number) => void;
     lua_pushnil: (L: any) => void;
@@ -13,16 +15,23 @@ declare module 'fengari' {
     lua_createtable: (L: any, narr: number, nrec: number) => void;
     lua_settable: (L: any, idx: number) => void;
     lua_rawget: (L: any, idx: number) => void;
+    lua_rawgeti: (L: any, idx: number, n: number) => void;
+    lua_next: (L: any, idx: number) => number;
     lua_rawset: (L: any, idx: number) => void;
     lua_rawseti: (L: any, idx: number, n: number) => void;
     lua_objlen: (L: any, idx: number) => number;
     lua_tostring: (L: any, idx: number) => any;
+    lua_tojsstring: (L: any, idx: number) => string;
     lua_tonumber: (L: any, idx: number) => number | null;
     lua_isstring: (L: any, idx: number) => boolean;
     lua_isnumber: (L: any, idx: number) => boolean;
     lua_istable: (L: any, idx: number) => boolean;
     lua_isfunction: (L: any, idx: number) => boolean;
-    lua_isnoneornil: (L: any, idx: number) => boolean;
+    lua_pushvalue: (L: any, idx: number) => void;
+    lua_toboolean: (L: any, idx: number) => number;
+    lua_isboolean: (L: any, idx: number) => boolean;
+    lua_typename: (L: any, t: number) => string;
+    lua_isnone: (L: any, idx: number) => boolean;
     lua_pop: (L: any, n: number) => void;
     lua_call: (L: any, nargs: number, nresults: number) => void;
     lua_pcall: (L: any, nargs: number, nresults: number, errfunc: number) => number;
@@ -35,6 +44,13 @@ declare module 'fengari' {
     LUA_ERRSYNTAX: number;
     LUA_ERRMEM: number;
     LUA_ERRERR: number;
+    LUA_TNONE: number;
+    LUA_TNIL: number;
+    LUA_TBOOLEAN: number;
+    LUA_TNUMBER: number;
+    LUA_TSTRING: number;
+    LUA_TTABLE: number;
+    LUA_TFUNCTION: number;
   };
 
   export const lauxlib: {
