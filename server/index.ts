@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto';
 import {
   createMessage,
   type ClientMessage,
+  type ExecuteMessage,
   type ServerMessage,
   type RenderMessage,
   type UICreateMessage,
@@ -199,8 +200,19 @@ function sendClientLog(clientId: string, level: LogMessage['level'], message: st
   sendToClient(clientId, createMessage<LogMessage>('log', { level, message }));
 }
 
-function handleExecute(clientId: string, code: string) {
-  console.log('[Server handleExecute] called with code:', code.substring(0, 100));
+function executeLuaChunk(code: string): void {
+  const wrappedCode = `
+${code}
+if main and type(main) == "function" then
+  main()
+end
+`;
+  L!.execute(wrappedCode);
+}
+
+function handleExecute(clientId: string, files?: Array<{ name: string; content: string }>, code?: string) {
+  console.log('[Server handleExecute] called');
+
   sendClientLog(clientId, 'debug', '[Server] Execute received');
 
   if (!L) {
@@ -209,14 +221,26 @@ function handleExecute(clientId: string, code: string) {
   }
 
   try {
-    const wrappedCode = `
-${code}
-if main and type(main) == "function" then
-  main()
-end
-`;
-    console.log('[Server handleExecute] executing wrapped code:', wrappedCode.substring(0, 200));
-    L.execute(wrappedCode);
+    if (files && files.length > 0) {
+      const otherFiles = files.filter(f => f.name !== 'main.lua').sort((a, b) => a.name.localeCompare(b.name));
+      const mainFile = files.find(f => f.name === 'main.lua');
+
+      for (const file of otherFiles) {
+        console.log('[Server] Loading file:', file.name);
+        const escapedContent = JSON.stringify(file.content);
+        const loadCode = `local chunk, err = load(${escapedContent}) if not chunk then error(err or "load error") end chunk()`;
+        L!.execute(loadCode);
+      }
+
+      if (mainFile) {
+        console.log('[Server] Executing main.lua');
+        executeLuaChunk(mainFile.content);
+      }
+    } else if (code) {
+      console.log('[Server handleExecute] executing single file code');
+      executeLuaChunk(code);
+    }
+
     console.log('[Server handleExecute] execute completed');
     const msg = createMessage<ServerMessage>('result', { success: true } as any);
     sendToClient(clientId, msg);
@@ -255,7 +279,8 @@ export function startServer() {
           case 'execute':
             console.log('[Server] matched execute case, message.type =', message.type);
             console.log('[Server] calling handleExecute now');
-            handleExecute(clientId, (message as any).code);
+            const execMsg = message as ExecuteMessage;
+            handleExecute(clientId, execMsg.files, execMsg.code);
             break;
           case 'ui_event':
             const key = `${message.eventType}:${message.dialogId}:${message.controlId}`;

@@ -18,7 +18,8 @@ export interface BaseMessage {
 
 export interface ExecuteMessage extends BaseMessage {
   type: 'execute';
-  code: string;
+  files?: Array<{ name: string; content: string }>;
+  code?: string;
 }
 
 export interface PingMessage extends BaseMessage {

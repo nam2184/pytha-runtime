@@ -13,10 +13,12 @@
   "dependencies": {
     "dotenv": "^17.4.2",
     "fengari": "^0.1.5",
+    "jszip": "^3.10.1",
     "three": "^0.162.0",
     "ws": "^8.16.0"
   },
   "devDependencies": {
+    "@types/jszip": "^3.4.0",
     "@types/node": "^20.11.0",
     "@types/three": "^0.162.0",
     "@types/ws": "^8.5.10",

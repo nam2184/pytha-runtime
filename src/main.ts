@@ -12,6 +12,20 @@ import { PythaRenderer } from './pytha-renderer';
 import { handleUICreate } from './pyui-client';
 import { SAMPLES, type SampleKey } from './sample-code';
 import { createPythaSocket } from './ws-client';
+import {
+  createFile,
+  deleteFile,
+  renameFile,
+  updateFileContent,
+  getActiveFile,
+  setActiveFile,
+  getFileContent,
+  getAllFiles,
+  downloadAsZip,
+  initDefaultFile,
+  getConcatenatedCode,
+  clearFiles,
+} from './file-manager';
 
 const WS_URL = `ws://localhost:${import.meta.env.VITE_WS_PORT ?? 8080}`;
 
@@ -21,6 +35,9 @@ const logPanel = document.getElementById('log-panel') as HTMLElement;
 const runBtn = document.getElementById('run-btn') as HTMLButtonElement;
 const clearBtn = document.getElementById('clear-btn') as HTMLButtonElement;
 const sampleSelect = document.getElementById('sample-select') as HTMLSelectElement;
+const fileList = document.getElementById('file-list') as HTMLElement;
+const addFileBtn = document.getElementById('add-file-btn') as HTMLButtonElement;
+const downloadZipBtn = document.getElementById('download-zip-btn') as HTMLButtonElement;
 
 const appendLog = createLogAppender(logPanel);
 const renderer = new PythaRenderer(container);
@@ -73,36 +90,115 @@ function isHandledServerMessage(type: ServerMessage['type']): type is keyof Serv
   return type in serverMessageHandlers;
 }
 
-runBtn.addEventListener('click', () => {
-  const code = luaEditor.value;
-  if (!code.trim()) {
-    appendLog('No code to execute', 'error');
-    return;
+function renderFileList() {
+  fileList.innerHTML = '';
+  const files = getAllFiles();
+
+  for (const file of files) {
+    const item = document.createElement('div');
+    item.className = 'file-item';
+    if (file.name === getActiveFile()) {
+      item.classList.add('active');
+    }
+
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'file-item-name';
+    nameSpan.textContent = file.name;
+
+    const actions = document.createElement('div');
+    actions.className = 'file-item-actions';
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.textContent = '×';
+    deleteBtn.title = 'Delete file';
+    deleteBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (confirm(`Delete ${file.name}?`)) {
+        deleteFile(file.name);
+        renderFileList();
+      }
+    });
+
+    actions.appendChild(deleteBtn);
+    item.appendChild(nameSpan);
+    item.appendChild(actions);
+
+    item.addEventListener('click', (e) => {
+      if ((e.target as HTMLElement).closest('.file-item-actions')) return;
+      selectFile(file.name);
+    });
+
+    fileList.appendChild(item);
   }
 
-  console.log('[Client] ws readyState:', socket.readyState() ?? 'ws is null');
+  const activeFile = getActiveFile();
+  if (activeFile) {
+    luaEditor.value = getFileContent(activeFile) || '';
+  }
+}
+
+function selectFile(name: string) {
+  const currentContent = luaEditor.value;
+  const activeFile = getActiveFile();
+  if (activeFile && activeFile !== name) {
+    updateFileContent(activeFile, currentContent);
+  }
+  setActiveFile(name);
+  luaEditor.value = getFileContent(name) || '';
+  renderFileList();
+}
+
+function showNewFileDialog() {
+  const name = prompt('Enter file name (e.g., utils.lua):');
+  if (name && name.trim()) {
+    const trimmedName = name.trim();
+    if (getAllFiles().some(f => f.name === trimmedName)) {
+      alert('File already exists!');
+      return;
+    }
+    createFile(trimmedName);
+    renderFileList();
+  }
+}
+
+function saveCurrentFile() {
+  const activeFile = getActiveFile();
+  if (activeFile) {
+    updateFileContent(activeFile, luaEditor.value);
+  }
+}
+
+function handleRun() {
+  saveCurrentFile();
 
   if (!socket.isOpen()) {
-    appendLog('Not connected to server (readyState: ' + (socket.readyState() ?? 'no ws') + ')', 'error');
-    console.log('[Client] Cannot send - WebSocket not open, state:', socket.readyState());
+    appendLog('Not connected to server', 'error');
     return;
   }
 
   renderer.clearScene();
 
+  const files = getAllFiles();
+  if (files.length === 0) {
+    appendLog('No files to execute', 'error');
+    return;
+  }
+
   const executeMsg = {
     type: 'execute',
-    code,
+    files,
     id: `exec_${Date.now()}`,
     timestamp: Date.now(),
   };
-  console.log('[Client] Sending execute message:', JSON.stringify(executeMsg).substring(0, 80));
+
   if (socket.send(executeMsg)) {
-    console.log('[Client] Message sent');
+    appendLog('Executing project...', 'info');
   } else {
-    appendLog('Failed to send execute message: WebSocket is not open', 'error');
+    appendLog('Failed to send code', 'error');
   }
-});
+}
+
+runBtn.addEventListener('click', handleRun);
 
 clearBtn.addEventListener('click', () => {
   renderer.clearScene();
@@ -112,14 +208,45 @@ sampleSelect.addEventListener('change', () => {
   const key = sampleSelect.value as SampleKey;
   const sample = SAMPLES[key];
   if (sample) {
-    luaEditor.value = sample.code;
+    const activeFile = getActiveFile();
+    if (activeFile) {
+      updateFileContent(activeFile, sample.code);
+      luaEditor.value = sample.code;
+      renderFileList();
+    }
     appendLog(`Loaded sample: ${sample.name}`, 'info');
   }
 });
 
+addFileBtn.addEventListener('click', showNewFileDialog);
+
+downloadZipBtn.addEventListener('click', async () => {
+  saveCurrentFile();
+  await downloadAsZip();
+  appendLog('Downloaded project as ZIP', 'info');
+});
+
+luaEditor.addEventListener('input', () => {
+  saveCurrentFile();
+});
+
+luaEditor.addEventListener('keydown', (e) => {
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    const start = luaEditor.selectionStart;
+    const end = luaEditor.selectionEnd;
+    const value = luaEditor.value;
+    luaEditor.value = value.substring(0, start) + '    ' + value.substring(end);
+    luaEditor.selectionStart = luaEditor.selectionEnd = start + 4;
+  }
+});
+
+initDefaultFile();
+renderFileList();
+
 renderer.init();
-  setTimeout(() => {
-    appendLog('Initializing WebSocket connection...', 'info');
-    socket.connect();
-  }, 500);
-  appendLog('Pytha client initialized', 'info');
+setTimeout(() => {
+  appendLog('Initializing WebSocket connection...', 'info');
+  socket.connect();
+}, 500);
+appendLog('Pytha client initialized', 'info');
