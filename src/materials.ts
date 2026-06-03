@@ -5,13 +5,19 @@ const colors = [
   0xff00ff, 0x00ffff, 0xffffff, 0xc0c0c0, 0x808080, 0x800000,
 ];
 
-export function getMaterial(penIndex: number): THREE.Material {
-  return new THREE.MeshStandardMaterial({
+export function getMaterial(penIndex: number, transparentMode = false): THREE.Material {
+  const material = new THREE.MeshStandardMaterial({
     color: colors[penIndex % colors.length],
     roughness: 0.5,
     metalness: 0.1,
-    transparent: true,
-    opacity: 0.9,
-    depthWrite: false,
   });
+  applyMaterialMode(material, transparentMode);
+  return material;
+}
+
+export function applyMaterialMode(material: THREE.Material, transparentMode: boolean) {
+  material.transparent = transparentMode;
+  material.opacity = transparentMode ? 0.35 : 1;
+  material.depthWrite = !transparentMode;
+  material.needsUpdate = true;
 }

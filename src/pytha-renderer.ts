@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { RenderMessage } from '../server/protocol';
 import type { DiscriminatedMap, ElementHandle, HandlerMap } from './client-types';
-import { getMaterial } from './materials';
+import { applyMaterialMode, getMaterial } from './materials';
 import { addSceneHelpers, POSITIVE_AXIS_LENGTH } from './scene-helpers';
 import { scalePoint, scalePythaXYPoint, scaleValue, scaleVector3 } from './units';
 
@@ -40,6 +40,7 @@ export class PythaRenderer {
   private controls!: OrbitControls;
   private registry = new Map<string, THREE.Object3D>();
   private axisLabels: AxisLabel[] = [];
+  private transparentMode = false;
 
   private readonly renderActionHandlers = {
     create: (msg) => {
@@ -115,6 +116,19 @@ export class PythaRenderer {
     }
     addSceneHelpers(this.scene);
     this.registry.clear();
+  }
+
+  setTransparentMode(enabled: boolean) {
+    this.transparentMode = enabled;
+    for (const object of this.registry.values()) {
+      object.traverse(child => {
+        if (!(child instanceof THREE.Mesh)) return;
+        const materials = Array.isArray(child.material) ? child.material : [child.material];
+        for (const material of materials) {
+          applyMaterialMode(material, this.transparentMode);
+        }
+      });
+    }
   }
 
   handleRender(msg: RenderMessage) {
@@ -264,7 +278,7 @@ export class PythaRenderer {
     const h = scaleValue(data.height);
     const d = scaleValue(data.width);
     const geo = new THREE.BoxGeometry(d, h, w);
-    const mat = getMaterial((data.options as any)?.pen ?? 0);
+    const mat = getMaterial((data.options as any)?.pen ?? 0, this.transparentMode);
     const mesh = new THREE.Mesh(geo, mat);
 
     const origin = data.origin as [number, number, number] | undefined;
@@ -281,7 +295,7 @@ export class PythaRenderer {
     const h = scaleValue(data.height);
     const r = scaleValue(data.radius);
     const geo = new THREE.CylinderGeometry(r, r, h, 32);
-    const mat = getMaterial((data.options as any)?.pen ?? 0);
+    const mat = getMaterial((data.options as any)?.pen ?? 0, this.transparentMode);
     const mesh = new THREE.Mesh(geo, mat);
 
     const origin = data.origin as [number, number, number] | undefined;
@@ -297,7 +311,7 @@ export class PythaRenderer {
   private createSphere(data: Record<string, unknown>, handle: ElementHandle) {
     const r = scaleValue(data.radius);
     const geo = new THREE.SphereGeometry(r, 32, 16);
-    const mat = getMaterial((data.options as any)?.pen ?? 0);
+    const mat = getMaterial((data.options as any)?.pen ?? 0, this.transparentMode);
     const mesh = new THREE.Mesh(geo, mat);
 
     const origin = data.origin as [number, number, number] | undefined;
@@ -324,7 +338,7 @@ export class PythaRenderer {
       shape.closePath();
     }
     const geo = new THREE.ShapeGeometry(shape);
-    const mat = getMaterial(0);
+    const mat = getMaterial(0, this.transparentMode);
     const mesh = new THREE.Mesh(geo, mat);
     mesh.rotation.x = Math.PI / 2;
 
@@ -388,7 +402,7 @@ export class PythaRenderer {
       obj.name = data.name as string;
     }
     if (typeof data.penIndex === 'number' && obj instanceof THREE.Mesh) {
-      obj.material = getMaterial(data.penIndex as number);
+      obj.material = getMaterial(data.penIndex as number, this.transparentMode);
     }
   }
 

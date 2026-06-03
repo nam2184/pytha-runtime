@@ -33,6 +33,7 @@ const luaEditor = document.getElementById('lua-editor') as HTMLTextAreaElement;
 const logPanel = document.getElementById('log-panel') as HTMLElement;
 const runBtn = document.getElementById('run-btn') as HTMLButtonElement;
 const clearBtn = document.getElementById('clear-btn') as HTMLButtonElement;
+const materialModeBtn = document.getElementById('material-mode-btn') as HTMLButtonElement;
 const sampleSelect = document.getElementById('sample-select') as HTMLSelectElement;
 const fileList = document.getElementById('file-list') as HTMLElement;
 const addFileBtn = document.getElementById('add-file-btn') as HTMLButtonElement;
@@ -40,6 +41,7 @@ const downloadZipBtn = document.getElementById('download-zip-btn') as HTMLButton
 
 const appendLog = createLogAppender(logPanel);
 const renderer = new PythaRenderer(container);
+let transparentMode = false;
 
 const socket = createPythaSocket({
   url: WS_URL,
@@ -214,6 +216,13 @@ runBtn.addEventListener('click', handleRun);
 clearBtn.addEventListener('click', () => {
   clearDialogs();
   renderer.clearScene();
+});
+
+materialModeBtn.addEventListener('click', () => {
+  transparentMode = !transparentMode;
+  renderer.setTransparentMode(transparentMode);
+  materialModeBtn.textContent = transparentMode ? 'Transparent: On' : 'Transparent: Off';
+  appendLog(`Material mode: ${transparentMode ? 'transparent' : 'solid'}`, 'info');
 });
 
 sampleSelect.addEventListener('change', () => {
