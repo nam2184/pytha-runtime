@@ -40,5 +40,6 @@ export interface ApiContext {
   emitLog: NonNullable<LuaRuntimeOptions['onLog']>;
   emitUICreate: NonNullable<LuaRuntimeOptions['onUICreate']>;
   emitPythaCall: NonNullable<LuaRuntimeOptions['onPythaCall']>;
-  pendingDialogCallbacks: Map<string, (data: unknown) => void>;
+  pendingDialogCallbacks: Map<string, number>;
+  controlRefs: Map<string, { changeRef: number | null; clickRef: number | null; value?: unknown }>;
 }

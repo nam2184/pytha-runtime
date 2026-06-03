@@ -15,7 +15,7 @@ import { registerMathApi } from './math-api.js';
 import { registerPythaApi } from './pytha.js';
 import { registerPygeoApi } from './pygeo.js';
 import { registerPyioApi } from './pyio.js';
-import { registerPyuiApi } from './pyui.js';
+import { clearDialogRefs, invokeHandler, registerPyuiApi } from './pyui.js';
 import type { ApiContext, LuaRuntimeOptions, LuaState } from './runtime-types.js';
 
 export type { LuaRuntimeOptions, LuaState } from './runtime-types.js';
@@ -23,6 +23,7 @@ export type { LuaRuntimeOptions, LuaState } from './runtime-types.js';
 const PORT = Number(process.env.WS_PORT ?? 8080);
 
 let L: LuaState | null = null;
+let rawLuaState: any | null = null;
 let wss: WebSocketServer | null = null;
 
 import * as fengari from 'fengari';
@@ -30,10 +31,12 @@ const { lua, lauxlib, lualib, to_luastring, to_jsstring } = fengari;
 
 const clients = new Map<string, WebSocket>();
 
-const pendingDialogCallbacks = new Map<string, (data: unknown) => void>();
+const pendingDialogCallbacks = new Map<string, number>();
+const controlRefs = new Map<string, { changeRef: number | null; clickRef: number | null; value?: unknown }>();
 
 export function initLuaVM(options: LuaRuntimeOptions = {}): LuaState {
   const L = lauxlib.luaL_newstate();
+  rawLuaState = L;
   lualib.luaL_openlibs(L);
 
   const emitRender = options.onRender ?? broadcastRender;
@@ -139,6 +142,7 @@ export function initLuaVM(options: LuaRuntimeOptions = {}): LuaState {
     emitUICreate,
     emitPythaCall,
     pendingDialogCallbacks,
+    controlRefs,
   };
 
   registerPythaApi(apiContext);
@@ -200,6 +204,16 @@ function sendClientLog(clientId: string, level: LogMessage['level'], message: st
   sendToClient(clientId, createMessage<LogMessage>('log', { level, message }));
 }
 
+function clearPendingDialogs() {
+  if (!rawLuaState) {
+    pendingDialogCallbacks.clear();
+    controlRefs.clear();
+    return;
+  }
+
+  clearDialogRefs(rawLuaState, pendingDialogCallbacks, controlRefs);
+}
+
 function executeLuaChunk(code: string): void {
   const wrappedCode = `
 ${code}
@@ -221,6 +235,8 @@ function handleExecute(clientId: string, files?: Array<{ name: string; content: 
   }
 
   try {
+    clearPendingDialogs();
+
     if (files && files.length > 0) {
       const otherFiles = files.filter(f => f.name !== 'main.lua').sort((a, b) => a.name.localeCompare(b.name));
       const mainFile = files.find(f => f.name === 'main.lua');
@@ -283,11 +299,12 @@ export function startServer() {
             handleExecute(clientId, execMsg.files, execMsg.code);
             break;
           case 'ui_event':
-            const key = `${message.eventType}:${message.dialogId}:${message.controlId}`;
-            const callback = pendingDialogCallbacks.get(key);
-            if (callback) {
-              callback(message.value);
+            if (rawLuaState) {
+              invokeHandler(rawLuaState, pendingDialogCallbacks, controlRefs, message.eventType, message.dialogId, message.controlId, message.value);
             }
+            break;
+          case 'ui_close':
+            clearPendingDialogs();
             break;
           case 'ping':
             ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));

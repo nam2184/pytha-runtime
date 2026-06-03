@@ -72,13 +72,18 @@ export interface UIEventMessage extends BaseMessage {
   value?: unknown;
 }
 
+export interface UICloseMessage extends BaseMessage {
+  type: 'ui_close';
+  dialogId?: string;
+}
+
 export interface LogMessage extends BaseMessage {
   type: 'log';
   level: 'info' | 'error' | 'debug';
   message: string;
 }
 
-export type ClientMessage = ExecuteMessage | PingMessage | UIEventMessage;
+export type ClientMessage = ExecuteMessage | PingMessage | UIEventMessage | UICloseMessage;
 
 export type ServerMessage = ResultMessage | ErrorMessage | RenderMessage | UICreateMessage | LogMessage | PongMessage;
 

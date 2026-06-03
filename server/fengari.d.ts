@@ -51,6 +51,7 @@ declare module 'fengari' {
     LUA_TSTRING: number;
     LUA_TTABLE: number;
     LUA_TFUNCTION: number;
+    LUA_REGISTRYINDEX: number;
   };
 
   export const lauxlib: {
@@ -62,6 +63,8 @@ declare module 'fengari' {
     luaL_checkstring: (L: any, idx: number) => string;
     luaL_checkinteger: (L: any, idx: number) => number;
     luaL_optnumber: (L: any, idx: number, def: number) => number;
+    luaL_ref: (L: any, idx: number) => number;
+    luaL_unref: (L: any, idx: number, ref: number) => void;
   };
 
   export const lualib: {

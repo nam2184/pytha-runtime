@@ -259,4 +259,34 @@ describe('pytha Lua API stack argument decoding', () => {
     });
     expect(byName(calls, 'get_length_unit')?.args).toMatchObject({ result: 1 });
   });
+
+  it('covers pyui dialog control creation and handler refs', () => {
+    const dialogs: Array<{ dialogId: string; controls: Array<{ type: string; label?: string }> }> = [];
+    const vm = initLuaVM({
+      onUICreate: (dialogId, controls) => dialogs.push({ dialogId, controls }),
+    });
+
+    vm.execute(`
+      local box
+
+      local function init_dialog(dialog, data)
+        dialog.create_label({10, 10}, "Size")
+        box = dialog.create_text_box({10, 40}, tostring(data.value))
+        box.set_on_change_handler(function(value)
+          data.value = tonumber(value) or data.value
+        end)
+
+        local ok = dialog.create_ok_button({10, 80})
+        ok.set_on_click_handler(function()
+          pytha.create_block(tonumber(box.get_value()) or 0, 1, 1)
+        end)
+      end
+
+      pyui.run_modal_dialog(init_dialog, {value = 150})
+    `);
+
+    expect(dialogs).toHaveLength(1);
+    expect(dialogs[0].controls.map(control => control.type)).toEqual(['label', 'text_box', 'button']);
+    expect(dialogs[0].controls[2].label).toBe('OK');
+  });
 });

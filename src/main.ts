@@ -9,7 +9,7 @@ import type {
 import type { HandlerMap } from './client-types';
 import { createLogAppender } from './log-panel';
 import { PythaRenderer } from './pytha-renderer';
-import { handleUICreate } from './pyui-client';
+import { handleUICreate, removeAllDialogs } from './pyui-client';
 import { SAMPLES, type SampleKey } from './sample-code';
 import { createPythaSocket } from './ws-client';
 import {
@@ -23,7 +23,6 @@ import {
   getAllFiles,
   downloadAsZip,
   initDefaultFile,
-  getConcatenatedCode,
   clearFiles,
 } from './file-manager';
 
@@ -176,6 +175,7 @@ function handleRun() {
     return;
   }
 
+  clearDialogs();
   renderer.clearScene();
 
   const files = getAllFiles();
@@ -198,9 +198,21 @@ function handleRun() {
   }
 }
 
+function clearDialogs() {
+  removeAllDialogs();
+  if (socket.isOpen()) {
+    socket.send({
+      type: 'ui_close',
+      id: `ui_close_${Date.now()}`,
+      timestamp: Date.now(),
+    });
+  }
+}
+
 runBtn.addEventListener('click', handleRun);
 
 clearBtn.addEventListener('click', () => {
+  clearDialogs();
   renderer.clearScene();
 });
 
@@ -243,6 +255,17 @@ luaEditor.addEventListener('keydown', (e) => {
 
 initDefaultFile();
 renderFileList();
+populateSampleSelect();
+
+function populateSampleSelect() {
+  sampleSelect.innerHTML = '';
+  for (const [key, sample] of Object.entries(SAMPLES)) {
+    const option = document.createElement('option');
+    option.value = key;
+    option.textContent = sample.name;
+    sampleSelect.appendChild(option);
+  }
+}
 
 renderer.init();
 setTimeout(() => {

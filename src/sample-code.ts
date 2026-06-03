@@ -338,6 +338,38 @@ function main()
     pyui.alert("Group demo - grouping, mirror, rotate")
 end`;
 
+export const UI_DIALOG_SAMPLE_CODE = `-- UI Dialog Demo
+local box
+local result_text
+
+local function init_dialog(dialog, data)
+    dialog.set_window_title("Pytha Dialog")
+    
+    local title = dialog.create_label({10, 10}, "Enter dimensions:")
+    
+    box = dialog.create_text_box({10, 40}, tostring(data.value or 100))
+    box.set_on_change_handler(function(val)
+        pyui.alert("Changed to: " .. tostring(val))
+    end)
+    
+    local ok_btn = dialog.create_ok_button({10, 80})
+    ok_btn.set_on_click_handler(function()
+        local val = tonumber(box.get_value()) or 0
+        pytha.create_block(val, val, val, {0, 0, 0})
+        pyui.alert("Created " .. val .. "mm cube")
+    end)
+    
+    local cancel_btn = dialog.create_cancel_button({100, 80})
+    cancel_btn.set_on_click_handler(function()
+        pyui.alert("Cancelled")
+    end)
+end
+
+function main()
+    pytha.create_block(100, 100, 100, {0, 0, 0})
+    pyui.run_modal_dialog(init_dialog, {value = 150})
+end`;
+
 export const SAMPLES = {
   cabinet: { name: 'Cabinet', code: CABINET_SAMPLE_CODE },
   tall_cabinet: { name: 'Tall Cabinet', code: TALL_CABINET_SAMPLE_CODE },
@@ -347,6 +379,7 @@ export const SAMPLES = {
   spiral: { name: 'Spiral', code: SPIRAL_SAMPLE_CODE },
   shapes: { name: 'Shapes', code: SHAPES_SAMPLE_CODE },
   group: { name: 'Group Demo', code: GROUP_SAMPLE_CODE },
+  ui_dialog: { name: 'UI Dialog', code: UI_DIALOG_SAMPLE_CODE },
 } as const;
 
 export type SampleKey = keyof typeof SAMPLES;
