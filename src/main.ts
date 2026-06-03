@@ -10,7 +10,7 @@ import type { HandlerMap } from './client-types';
 import { createLogAppender } from './log-panel';
 import { PythaRenderer } from './pytha-renderer';
 import { handleUICreate } from './pyui-client';
-import { CABINET_SAMPLE_CODE } from './sample-code';
+import { SAMPLES, type SampleKey } from './sample-code';
 import { createPythaSocket } from './ws-client';
 
 const WS_URL = `ws://localhost:${import.meta.env.VITE_WS_PORT}`;
@@ -20,7 +20,7 @@ const luaEditor = document.getElementById('lua-editor') as HTMLTextAreaElement;
 const logPanel = document.getElementById('log-panel') as HTMLElement;
 const runBtn = document.getElementById('run-btn') as HTMLButtonElement;
 const clearBtn = document.getElementById('clear-btn') as HTMLButtonElement;
-const sampleBtn = document.getElementById('sample-btn') as HTMLButtonElement;
+const sampleSelect = document.getElementById('sample-select') as HTMLSelectElement;
 
 const appendLog = createLogAppender(logPanel);
 const renderer = new PythaRenderer(container);
@@ -108,9 +108,13 @@ clearBtn.addEventListener('click', () => {
   renderer.clearScene();
 });
 
-sampleBtn.addEventListener('click', () => {
-  luaEditor.value = CABINET_SAMPLE_CODE;
-  appendLog('Sample code loaded', 'info');
+sampleSelect.addEventListener('change', () => {
+  const key = sampleSelect.value as SampleKey;
+  const sample = SAMPLES[key];
+  if (sample) {
+    luaEditor.value = sample.code;
+    appendLog(`Loaded sample: ${sample.name}`, 'info');
+  }
 });
 
 renderer.init();
