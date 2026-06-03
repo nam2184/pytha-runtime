@@ -1,5 +1,7 @@
 export type MessageType =
   | 'execute'
+  | 'ping'
+  | 'pong'
   | 'result'
   | 'error'
   | 'render'
@@ -17,6 +19,16 @@ export interface BaseMessage {
 export interface ExecuteMessage extends BaseMessage {
   type: 'execute';
   code: string;
+}
+
+export interface PingMessage extends BaseMessage {
+  type: 'ping';
+  timestamp: number;
+}
+
+export interface PongMessage extends BaseMessage {
+  type: 'pong';
+  timestamp: number;
 }
 
 export interface ResultMessage extends BaseMessage {
@@ -65,9 +77,9 @@ export interface LogMessage extends BaseMessage {
   message: string;
 }
 
-export type ClientMessage = ExecuteMessage | UIEventMessage;
+export type ClientMessage = ExecuteMessage | PingMessage | UIEventMessage;
 
-export type ServerMessage = ResultMessage | ErrorMessage | RenderMessage | UICreateMessage | UIEventMessage | LogMessage;
+export type ServerMessage = ResultMessage | ErrorMessage | RenderMessage | UICreateMessage | LogMessage | PongMessage;
 
 export function createMessage<T extends BaseMessage>(type: T['type'], data: Omit<T, 'type' | 'id' | 'timestamp'>): T {
   return {

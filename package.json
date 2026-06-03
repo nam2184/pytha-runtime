@@ -11,6 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "dotenv": "^17.4.2",
     "fengari": "^0.1.5",
     "three": "^0.162.0",
     "ws": "^8.16.0"
