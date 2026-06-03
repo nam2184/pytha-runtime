@@ -13,7 +13,7 @@ import { handleUICreate } from './pyui-client';
 import { SAMPLES, type SampleKey } from './sample-code';
 import { createPythaSocket } from './ws-client';
 
-const WS_URL = `ws://localhost:${import.meta.env.VITE_WS_PORT}`;
+const WS_URL = `ws://localhost:${import.meta.env.VITE_WS_PORT ?? 8080}`;
 
 const container = document.getElementById('three-container') as HTMLElement;
 const luaEditor = document.getElementById('lua-editor') as HTMLTextAreaElement;

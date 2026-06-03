@@ -19,7 +19,7 @@ import type { ApiContext, LuaRuntimeOptions, LuaState } from './runtime-types.js
 
 export type { LuaRuntimeOptions, LuaState } from './runtime-types.js';
 
-const PORT = Number(process.env.WS_PORT ?? 8082);
+const PORT = Number(process.env.WS_PORT ?? 8080);
 
 let L: LuaState | null = null;
 let wss: WebSocketServer | null = null;
