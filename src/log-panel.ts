@@ -1,4 +1,4 @@
-import type { LogType } from './client-types';
+import type { LogType } from '@/src/client-types';
 
 export function createLogAppender(logPanel: HTMLElement) {
   return (message: string, type: LogType = 'normal') => {

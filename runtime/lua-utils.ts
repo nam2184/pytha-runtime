@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import * as fengari from 'fengari';
-import type { RenderMessage } from './protocol.js';
-import type { ElementHandle } from './runtime-types.js';
+import type { RenderMessage } from '@/shared/protocol.js';
+import type { ElementHandle } from '@/runtime/runtime-types.js';
 
 const { lua, to_luastring } = fengari;
 

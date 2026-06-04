@@ -9,16 +9,16 @@ import {
   type RenderMessage,
   type UICreateMessage,
   type LogMessage,
-} from './protocol.js';
-import { luaValueToJs, pushValue } from './lua-utils.js';
-import { registerMathApi } from './math-api.js';
-import { registerPythaApi } from './pytha.js';
-import { registerPygeoApi } from './pygeo.js';
-import { registerPyioApi } from './pyio.js';
-import { clearDialogRefs, invokeHandler, registerPyuiApi } from './pyui.js';
-import type { ApiContext, LuaRuntimeOptions, LuaState } from './runtime-types.js';
+} from '@/shared/protocol.js';
+import { luaValueToJs, pushValue } from '@/runtime/lua-utils.js';
+import { registerMathApi } from '@/runtime/math-api.js';
+import { registerPythaApi } from '@/runtime/pytha.js';
+import { registerPygeoApi } from '@/runtime/pygeo.js';
+import { registerPyioApi } from '@/runtime/pyio.js';
+import { clearDialogRefs, invokeHandler, registerPyuiApi } from '@/runtime/pyui.js';
+import type { ApiContext, LuaRuntimeOptions, LuaState } from '@/runtime/runtime-types.js';
 
-export type { LuaRuntimeOptions, LuaState } from './runtime-types.js';
+export type { LuaRuntimeOptions, LuaState } from '@/runtime/runtime-types.js';
 
 const PORT = Number(process.env.WS_PORT ?? 8080);
 
@@ -114,13 +114,22 @@ export function initLuaVM(options: LuaRuntimeOptions = {}): LuaState {
     },
   };
 
-  const printFn = (...args: unknown[]) => {
-    const msg = args.map(a => String(a)).join(' ');
+  const printFn = (luaState: any) => {
+    const nargs = lua.lua_gettop(luaState);
+    const parts: string[] = [];
+
+    for (let i = 1; i <= nargs; i++) {
+      parts.push(to_jsstring_(lauxlib.luaL_tolstring(luaState, i)!));
+      lua.lua_pop(luaState, 1);
+    }
+
+    const msg = parts.join('\t');
     try {
       emitLog('debug', `[Lua] ${msg}`);
     } catch (e) {
       console.error('[Lua print] broadcast error:', e);
     }
+    return 0;
   };
 
   lua.lua_pushjsclosure(L, printFn, 0);

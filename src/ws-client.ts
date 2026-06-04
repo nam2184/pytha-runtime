@@ -1,5 +1,5 @@
-import type { ServerMessage } from '../server/protocol';
-import type { AppendLog } from './client-types';
+import type { ServerMessage } from '@/shared/protocol';
+import type { AppendLog } from '@/src/client-types';
 
 const MAX_RECONNECT = 8;
 const BASE_RECONNECT_DELAY = 1000;

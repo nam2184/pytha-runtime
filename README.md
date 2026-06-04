@@ -1,6 +1,6 @@
 # Pytha Runtime
 
-A client-server Lua runtime that executes Lua code via Fengari (Lua VM in JavaScript) and renders 3D geometry via Three.js.
+A browser-to-runtime Lua environment that executes Lua code via Fengari (Lua VM in JavaScript) and renders 3D geometry via Three.js.
 
 ## Architecture
 
@@ -25,7 +25,7 @@ A client-server Lua runtime that executes Lua code via Fengari (Lua VM in JavaSc
                                │                      
                                ▼                    
 ┌──────────────────────────────┼─────────────────────────────────────┐
-│                          Server (Node.js)                          │
+│                         Runtime (Node.js)                          │
 │                              │                                     │
 │   ┌──────────────────────────┴───────────────────────────────────┐ │
 │   │                    Fengari Lua VM                            │ │
@@ -43,17 +43,17 @@ A client-server Lua runtime that executes Lua code via Fengari (Lua VM in JavaSc
 **Message Flow:**
 
 1. Client sends Lua code via WebSocket
-2. Server passes code to Fengari Lua VM
+2. Runtime passes code to Fengari Lua VM
 3. Lua VM executes, calling JS closures (pytha.*, pyui.*, etc.)
-4. JS closures send messages back to Server
-5. Server broadcasts messages to Client
+4. JS closures send messages back to Runtime
+5. Runtime broadcasts messages to Client
 6. Three.js renders geometry / HTML UI shows dialogs
 
 ## Running
 
 ```bash
 npm install
-npm run dev:server  # Start WebSocket server on port 8080
+npm run dev:runtime # Start WebSocket runtime on port 8080
 npm run dev:client   # Start Vite dev server on port 3000
 ```
 

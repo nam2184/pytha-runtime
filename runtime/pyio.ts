@@ -1,4 +1,4 @@
-import type { ApiContext } from './runtime-types.js';
+import type { ApiContext } from '@/runtime/runtime-types.js';
 
 export function registerPyioApi({ state }: ApiContext): void {
   state.setGlobal('pyio', {

@@ -5,13 +5,13 @@ import type {
   ResultMessage,
   ServerMessage,
   UICreateMessage,
-} from '../server/protocol';
-import type { HandlerMap } from './client-types';
-import { createLogAppender } from './log-panel';
-import { PythaRenderer } from './pytha-renderer';
-import { handleUICreate, removeAllDialogs } from './pyui-client';
-import { SAMPLES, type SampleKey } from './sample-code';
-import { createPythaSocket } from './ws-client';
+} from '@/shared/protocol';
+import type { HandlerMap } from '@/src/client-types';
+import { createLogAppender } from '@/src/log-panel';
+import { PythaRenderer } from '@/src/pytha-renderer';
+import { handleUICreate, removeAllDialogs } from '@/src/pyui-client';
+import { SAMPLES, type SampleKey } from '@/src/sample-code';
+import { createPythaSocket } from '@/src/ws-client';
 import {
   createFile,
   deleteFile,
@@ -24,7 +24,7 @@ import {
   downloadAsZip,
   initDefaultFile,
   clearFiles,
-} from './file-manager';
+} from '@/src/file-manager';
 
 const WS_URL = `ws://localhost:${import.meta.env.VITE_WS_PORT ?? 8080}`;
 

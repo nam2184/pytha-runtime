@@ -1,4 +1,4 @@
-import type { LogMessage, RenderMessage, UICreateMessage } from './protocol.js';
+import type { LogMessage, RenderMessage, UICreateMessage } from '@/shared/protocol.js';
 
 export interface LuaState {
   execute(code: string): void;

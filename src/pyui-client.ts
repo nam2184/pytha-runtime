@@ -1,5 +1,5 @@
-import type { UICreateMessage } from '../server/protocol';
-import type { SendMessage } from './client-types';
+import type { UICreateMessage } from '@/shared/protocol';
+import type { SendMessage } from '@/src/client-types';
 
 export function handleUICreate(msg: UICreateMessage, send: SendMessage) {
   const controlTopOffset = 32;

@@ -1,8 +1,8 @@
 import { randomUUID } from 'crypto';
 import * as fengari from 'fengari';
-import type { UICreateMessage } from './protocol.js';
-import type { ApiContext } from './runtime-types.js';
-import { luaValueToJs, pushValue } from './lua-utils.js';
+import type { UICreateMessage } from '@/shared/protocol.js';
+import type { ApiContext } from '@/runtime/runtime-types.js';
+import { luaValueToJs, pushValue } from '@/runtime/lua-utils.js';
 
 const { lua, lauxlib, to_jsstring } = fengari;
 

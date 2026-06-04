@@ -1,4 +1,4 @@
-import type { LuaState } from './runtime-types.js';
+import type { LuaState } from '@/runtime/runtime-types.js';
 
 export function registerMathApi(state: LuaState): void {
   const math = {

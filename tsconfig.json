@@ -1,19 +1,13 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "strict": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true,
-    "isolatedModules": true,
-    "noEmit": true,
-    "jsx": "preserve",
-    "allowImportingTsExtensions": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./*"]
+    }
   },
-  "include": ["src/**/*", "server/**/*"],
-  "exclude": ["node_modules"]
+  "files": [],
+  "references": [
+    { "path": "./tsconfig.app.json" },
+    { "path": "./tsconfig.runtime.json" }
+  ]
 }

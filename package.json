@@ -3,11 +3,12 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
-    "dev:server": "tsx watch server/index.ts",
+    "dev": "concurrently \"npm run dev:runtime\" \"npm run dev:client\"",
+    "dev:runtime": "tsx watch runtime/index.ts",
     "dev:client": "vite",
+    "mcp": "node.exe --import tsx runtime/mcp.ts",
     "build": "vite build",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.runtime.json --noEmit",
     "test": "vitest run"
   },
   "dependencies": {

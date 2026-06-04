@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import type { RenderMessage } from '../server/protocol';
-import type { DiscriminatedMap, ElementHandle, HandlerMap } from './client-types';
-import { applyMaterialMode, getMaterial } from './materials';
-import { addSceneHelpers, POSITIVE_AXIS_LENGTH } from './scene-helpers';
-import { scalePoint, scalePythaXYPoint, scaleValue, scaleVector3 } from './units';
+import type { RenderMessage } from '@/shared/protocol';
+import type { DiscriminatedMap, ElementHandle, HandlerMap } from '@/src/client-types';
+import { applyMaterialMode, getMaterial } from '@/src/materials';
+import { addSceneHelpers, POSITIVE_AXIS_LENGTH } from '@/src/scene-helpers';
+import { scalePoint, scalePythaXYPoint, scaleValue, scaleVector3 } from '@/src/units';
 
 type RenderActionMap = {
   create: Pick<RenderMessage, 'elementType' | 'data'>;

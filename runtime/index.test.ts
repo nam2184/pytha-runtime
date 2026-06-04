@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { initLuaVM } from './index.ts';
-import type { RenderMessage } from './protocol.ts';
+import { initLuaVM } from '@/runtime/index.js';
+import type { RenderMessage } from '@/shared/protocol.js';
 
 interface CapturedRender {
   action: RenderMessage['action'];

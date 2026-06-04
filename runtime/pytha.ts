@@ -1,6 +1,6 @@
 import * as fengari from 'fengari';
-import type { ApiContext, ElementHandle } from './runtime-types.js';
-import { createElementHandle, getElementHandles, luaValueToJs, pushValue } from './lua-utils.js';
+import type { ApiContext, ElementHandle } from '@/runtime/runtime-types.js';
+import { createElementHandle, getElementHandles, luaValueToJs, pushValue } from '@/runtime/lua-utils.js';
 
 const { lua, to_jsstring } = fengari;
 
