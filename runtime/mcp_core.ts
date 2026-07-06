@@ -14,7 +14,10 @@ import {
   clearAllProjects,
   findStagedProject,
   hashProjectPayload,
+  hashPathsPayload,
   listStagedProjects,
+  resolveWorkspacePaths,
+  stagePaths,
   stageProject,
   unloadProject,
   type StagedProject,
@@ -207,6 +210,60 @@ export const TOOLS: ReadonlyArray<McpToolDefinition> = [
       type: 'object',
       required: ['project_id'],
       properties: { project_id: { type: 'string' } },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'pytha_run_project_paths',
+    description:
+      'Stage a list of workspace paths (file or directory) into a temp directory, run the entry point, and return feedback. Cache key is the SHA-256 of the normalized path set plus each file\u2019s content hash.',
+    inputSchema: {
+      type: 'object',
+      required: ['project_paths', 'workspace_root'],
+      properties: {
+        project_id: {
+          type: 'string',
+          description:
+            'Optional project id to reuse; if omitted, computed as the SHA-256 of the workspace path set.',
+        },
+        workspace_root: {
+          type: 'string',
+          description: 'Absolute path of the workspace root. All `project_paths` must resolve inside it.',
+        },
+        project_paths: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Absolute or workspace-relative paths. The runtime will copy them into the staging dir preserving relative layout (or basename-only for paths outside cwd).',
+        },
+        entry: {
+          type: 'string',
+          description: 'Optional entry point (default: autodetect main.lua/init.lua or "main.lua").',
+        },
+        reload: {
+          type: 'boolean',
+          description: 'If true, wipe the cached staging for this payload and re-copy from disk.',
+        },
+        timeoutMs: { type: 'number' },
+        websocketUrl: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'pytha_load_project_paths',
+    description:
+      'Stage a list of workspace paths without executing. Mirrors pytha_run_project_paths but returns only staging metadata.',
+    inputSchema: {
+      type: 'object',
+      required: ['project_paths', 'workspace_root'],
+      properties: {
+        project_id: { type: 'string' },
+        workspace_root: { type: 'string' },
+        project_paths: { type: 'array', items: { type: 'string' } },
+        entry: { type: 'string' },
+        reload: { type: 'boolean' },
+      },
       additionalProperties: false,
     },
   },
@@ -544,6 +601,8 @@ export async function dispatchJsonRpc(
         const PROJECT_TOOLS = new Set([
           'pytha_run_project',
           'pytha_load_project',
+          'pytha_run_project_paths',
+          'pytha_load_project_paths',
           'pytha_reload_project',
           'pytha_unload_project',
           'pytha_clear_all_projects',
@@ -634,13 +693,6 @@ export async function dispatchJsonRpc(
             entryPoint: payloadArgs.entry,
           });
 
-          // If the caller passed an explicit project_id, alias the staged
-          // entry so subsequent calls with the same id resolve correctly.
-          if (payloadArgs.project_id && payloadArgs.project_id !== projectId) {
-            // We don't actually store by custom id; we hash anyway.
-            // No-op today; reserved for future keyed registry.
-          }
-
           if (toolName === 'pytha_load_project') {
             return {
               jsonrpc: '2.0',
@@ -669,9 +721,7 @@ export async function dispatchJsonRpc(
           }
 
           // pytha_run_project: hand the staged entry off to the runtime.
-          // We pass the entry as the `code` arg because `files`/`paths`
-          // don't include an internal tempdir location.
-          const entryPath = `${stage.project.staging_dir}${path.sep}${stage.project.entry_point}`.replace(/[/\\]/g, path.sep);
+          const entryPath = `${stage.project.staging_dir}${path.sep}${stage.project.entry_point}`.replace(/[/\\\\]/g, path.sep);
           const luaSource = await readFile(entryPath, 'utf8');
           const feedback = await runPythaLua({
             code: luaSource,
@@ -680,6 +730,113 @@ export async function dispatchJsonRpc(
           });
           const text = [
             `Project staging: ${projectId} (${stage.reused ? 'reused' : 'extracted'})`,
+            `Entry point: ${stage.project.entry_point}`,
+            '',
+            summarizeFeedback(feedback),
+          ].join('\n');
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{ type: 'text', text }],
+              isError: !feedback.success,
+            },
+          };
+        }
+
+        if (toolName === 'pytha_load_project_paths' || toolName === 'pytha_run_project_paths') {
+          const pathsArgs = args as {
+            project_id?: string;
+            workspace_root?: string;
+            project_paths?: string[];
+            entry?: string;
+            reload?: boolean;
+            timeoutMs?: number;
+            websocketUrl?: string;
+          };
+          if (
+            typeof pathsArgs.workspace_root !== 'string' ||
+            pathsArgs.workspace_root.length === 0
+          ) {
+            return {
+              jsonrpc: '2.0',
+              id,
+              error: { code: -32602, message: 'workspace_root is required for paths-mode tools' },
+            };
+          }
+          if (
+            !Array.isArray(pathsArgs.project_paths) ||
+            pathsArgs.project_paths.length === 0
+          ) {
+            return {
+              jsonrpc: '2.0',
+              id,
+              error: { code: -32602, message: 'project_paths must be a non-empty array' },
+            };
+          }
+
+          // Validate paths before staging so a bad workspace root doesn't
+          // create (and then abort) a partially populated staging dir.
+          try {
+            resolveWorkspacePaths(pathsArgs.workspace_root, pathsArgs.project_paths);
+          } catch (resolveError) {
+            return {
+              jsonrpc: '2.0',
+              id,
+              error: {
+                code: -32602,
+                message: resolveError instanceof Error ? resolveError.message : String(resolveError),
+              },
+            };
+          }
+
+          if (toolName === 'pytha_load_project_paths' && pathsArgs.project_id) {
+            await unloadProject(pathsArgs.project_id);
+          }
+
+          const stage = await stagePaths(pathsArgs.project_paths, {
+            workspaceRoot: pathsArgs.workspace_root,
+            reload: pathsArgs.reload,
+            entryPoint: pathsArgs.entry,
+          });
+
+          if (toolName === 'pytha_load_project_paths') {
+            return {
+              jsonrpc: '2.0',
+              id,
+              result: {
+                content: [
+                  {
+                    type: 'text',
+                    text: JSON.stringify(
+                      {
+                        project_id: stage.project.project_id,
+                        reused: stage.reused,
+                        staging_dir: stage.project.staging_dir,
+                        entry_point: stage.project.entry_point,
+                        file_count: stage.project.file_count,
+                        resolved_paths: stage.resolvedPaths,
+                      },
+                      null,
+                      2,
+                    ),
+                  },
+                ],
+                isError: false,
+              },
+            };
+          }
+
+          // pytha_run_project_paths: same execution path as zip version.
+          const luaPath = path.join(stage.project.staging_dir, stage.project.entry_point);
+          const luaSource = await readFile(luaPath, 'utf8');
+          const feedback = await runPythaLua({
+            code: luaSource,
+            websocketUrl: pathsArgs.websocketUrl,
+            timeoutMs: pathsArgs.timeoutMs,
+          });
+          const text = [
+            `Project staging: ${stage.project.project_id} (${stage.reused ? 'reused' : 'extracted'})`,
             `Entry point: ${stage.project.entry_point}`,
             '',
             summarizeFeedback(feedback),

@@ -17,9 +17,19 @@
 // server cleans up the parent on SIGINT/SIGTERM via `clearAllOnShutdown`.
 
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdtemp, rm, writeFile, mkdir, stat, readdir } from 'node:fs/promises';
+import {
+  mkdtemp,
+  rm,
+  writeFile,
+  mkdir,
+  stat,
+  readdir,
+  copyFile,
+  readFile,
+} from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve, relative, sep } from 'node:path';
+import { join, resolve, relative, isAbsolute, sep, normalize } from 'node:path';
 import * as yauzl from 'yauzl';
 import { performance } from 'node:perf_hooks';
 
@@ -301,8 +311,204 @@ export async function listStagedFiles(stagedDir: string): Promise<string[]> {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Cleanup                                                                    */
+/* Paths-mode staging                                                          */
 /* -------------------------------------------------------------------------- */
+
+/**
+ * Resolve a list of user-supplied paths against the active workspace root
+ * (defaults to `process.cwd()`). All paths must already be absolute
+ * and contain no `..` segments — anything else is rejected with a clear
+ * error so the staging path stays inside `WORKSPACE_ROOT`.
+ */
+export function resolveWorkspacePaths(workspaceRoot: string, rawPaths: string[]): string[] {
+  const root = resolve(workspaceRoot);
+  if (!existsSync(root)) {
+    throw new Error(`Workspace root does not exist: ${root}`);
+  }
+  const resolved: string[] = [];
+  for (const raw of rawPaths) {
+    if (typeof raw !== 'string' || raw.length === 0) {
+      throw new Error('Every project path must be a non-empty string.');
+    }
+    const absolute = isAbsolute(raw) ? raw : resolve(root, raw);
+    if (!absolute.startsWith(root + sep) && absolute !== root) {
+      throw new Error(`Path escapes workspace root: ${raw}`);
+    }
+    resolved.push(absolute);
+  }
+  return Array.from(new Set(resolved)).sort();
+}
+
+/**
+ * Build a content fingerprint from a list of resolved absolute paths.
+ * The paths are sorted internally so reordering inputs produces a
+ * stable hash. Per-file content is mixed in too so renaming a file
+ * or editing one byte invalidates the cache entry. Symlinks and
+ * missing files fall back to a `#missing` tag.
+ */
+export async function hashPathsPayload(absolutePaths: string[]): Promise<string> {
+  const hasher = createHash('sha256');
+  hasher.update('paths:');
+  const sorted = [...absolutePaths].sort();
+  for (const absolute of sorted) {
+    hasher.update('|');
+    hasher.update(absolute);
+    try {
+      const buffer = await readFile(absolute);
+      hasher.update('#');
+      const inner = createHash('sha256').update(buffer).digest('hex');
+      hasher.update(inner);
+    } catch {
+      hasher.update('#missing');
+    }
+  }
+  return hasher.digest('hex');
+}
+
+/**
+ * Mirror a list of resolved absolute paths into `destDir`, preserving
+ * relative paths. Skips anything that lives inside `destDir` already
+ * (typically called with the workspace root itself).
+ */
+async function copyPathsIntoStaging(absolutePaths: string[], destDir: string): Promise<void> {
+  for (const absolute of absolutePaths) {
+    const insideDest = absolute.startsWith(destDir + sep) || absolute.startsWith(join(destDir, sep));
+    if (insideDest) continue;
+    const info = await stat(absolute).catch(() => null);
+    if (!info) continue;
+    const rel = relative(process.cwd(), absolute);
+    const target = rel.startsWith('..') || rel.startsWith(sep)
+      ? join(destDir, basename(absolute))
+      : join(destDir, rel);
+    if (info.isDirectory()) {
+      await mkdir(target, { recursive: true });
+      const entries = await readdir(absolute, { withFileTypes: true });
+      for (const entry of entries) {
+        const child = join(absolute, entry.name);
+        await copyPathsIntoStaging([child], destDir);
+      }
+      continue;
+    }
+    if (info.isFile()) {
+      await mkdir(relative(target, destDir) || destDir, { recursive: true }).catch(async () => {
+        await mkdir(target.substring(0, target.lastIndexOf(sep)), { recursive: true });
+      });
+      const targetDir = target.substring(0, target.lastIndexOf(sep));
+      await mkdir(targetDir, { recursive: true });
+      await copyFile(absolute, target);
+    }
+  }
+}
+
+function basename(p: string): string {
+  const norm = normalize(p);
+  const idx = Math.max(norm.lastIndexOf('/'), norm.lastIndexOf(sep));
+  return idx >= 0 ? norm.slice(idx + 1) : norm;
+}
+
+export interface StagePathsOptions {
+  workspaceRoot: string;
+  reload?: boolean;
+  entryPoint?: string;
+}
+
+/**
+ * Stage a list of workspace-relative paths into a project dir.
+ * Identity is determined by SHA-256(sorted paths + per-file content
+ * hashes). Identical calls reuse the same staging dir.
+ */
+export async function stagePaths(
+  rawPaths: string[],
+  options: StagePathsOptions,
+): Promise<{ project: StagedProjectView; reused: boolean; resolvedPaths: string[] }> {
+  const absolutePaths = resolveWorkspacePaths(options.workspaceRoot, rawPaths);
+  const projectId = await hashPathsPayload(absolutePaths);
+  const existing = projects.get(projectId);
+  if (existing && options.reload) {
+    await rm(existing.stagingDir, { recursive: true, force: true });
+    projects.delete(projectId);
+  } else if (existing) {
+    return { project: toView(existing), reused: true, resolvedPaths: absolutePaths };
+  }
+
+  const stagedDir = join(STAGING_ROOT, projectId);
+  await mkdir(stagedDir, { recursive: true });
+  const start = performance.now();
+  await copyPathsIntoStaging(absolutePaths, stagedDir);
+
+  // Walk the staging dir to locate the entry point.
+  let entryPoint = options.entryPoint;
+  if (!entryPoint) {
+    // Auto-detect: prefer common entry names; fall back to the first file we copied.
+    const fallback = await firstFileIn(absolutePaths);
+    entryPoint = (await findEntryPoint(stagedDir)) ?? fallback ?? 'main.lua';
+  }
+  const entryPath = join(stagedDir, entryPoint);
+  const entryStat = await stat(entryPath).catch(() => null);
+  if (!entryStat?.isFile()) {
+    await rm(stagedDir, { recursive: true, force: true });
+    throw new Error(
+      `Project entry point '${entryPoint}' not found in staged files.`,
+    );
+  }
+
+  const fileCount = await countFilesUnder(stagedDir);
+  const record: StagedProject = {
+    projectId,
+    stagingDir: stagedDir,
+    createdAt: new Date().toISOString(),
+    entryPoint,
+    totalBytes: 0,
+    fileCount,
+  };
+  projects.set(projectId, record);
+  return {
+    project: toView(record),
+    reused: false,
+    resolvedPaths: absolutePaths,
+    extracted_in_ms: Math.round(performance.now() - start),
+  } as {
+    project: StagedProjectView;
+    reused: boolean;
+    resolvedPaths: string[];
+    extracted_in_ms: number;
+  };
+}
+
+async function countFilesUnder(root: string): Promise<number> {
+  let count = 0;
+  const entries = await readdir(root, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      count += await countFilesUnder(join(root, entry.name));
+    } else if (entry.isFile()) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+/**
+ * Pick the basename of the first *file* path in the list. Used as a
+ * fallback when the agent didn't pick an entry point and the project
+ * doesn't ship a main.lua / init.lua convention.
+ */
+export async function firstFileIn(absolutePaths: string[]): Promise<string | undefined> {
+  for (const absolute of absolutePaths) {
+    const info = await stat(absolute).catch(() => null);
+    if (info?.isFile()) return basename(absolute);
+  }
+  return undefined;
+}
+
+/**
+ * Generate a unique invocation id used to correlate logs / render
+ * messages emitted by the same Pytha execute call. Exposed so the MCP
+ * wrappers can include it in feedback.
+ */
+export function generateInvocationId(prefix: string): string {
+  return `${prefix}_${randomUUID()}`;
+}
 
 export async function unloadProject(projectId: string): Promise<boolean> {
   const project = projects.get(projectId);
@@ -324,13 +530,4 @@ export async function clearAllProjects(): Promise<{ cleared: number; rootRemoved
     .then(() => true)
     .catch(() => false);
   return { cleared, rootRemoved };
-}
-
-/**
- * Generate a unique invocation id used to correlate logs / render
- * messages emitted by the same Pytha execute call. Exposed so the MCP
- * wrappers can include it in feedback.
- */
-export function generateInvocationId(prefix: string): string {
-  return `${prefix}_${randomUUID()}`;
 }

@@ -149,7 +149,7 @@ In Arachne's MCP settings (`transport = streamable_http`):
 }
 ```
 
-Arachne will auto-discover seven tools:
+Arachne will auto-discover nine tools:
 
 - `pytha_run_lua` — execute a single Lua chunk or in-memory file set.
 - `pytha_watch_lua` — watch a set of `.lua` paths and re-run on changes.
@@ -158,9 +158,42 @@ Arachne will auto-discover seven tools:
   and return the feedback. Subsequent calls with the same payload
   reuse the staged directory; pass `reload: true` to wipe and
   re-extract before running.
-- `pytha_load_project` — same staging lifecycle without execution.
+- `pytha_run_project_paths` — same lifecycle, but the caller supplies
+  a list of workspace paths (files or directories) under a
+  `workspace_root`. The cache key is the SHA-256 of the sorted path
+  set plus each file's content hash, so an edit invalidates the cache.
+- `pytha_load_project` / `pytha_load_project_paths` — same staging
+  lifecycle without execution.
 - `pytha_reload_project` / `pytha_unload_project` / `pytha_clear_all_projects`
   — manage the staged directories.
+
+#### `pytha_run_project_paths` payload shape
+
+Use this when the agent has filesystem access to the project on the
+same host as pytha-runtime. There's no zip round-trip — just paths.
+
+```http
+POST /mcp HTTP/1.1
+Content-Type: application/json
+Accept: application/json
+mcp-session-id: <from initialize>
+
+{"jsonrpc":"2.0","id":4,"method":"tools/call",
+ "params":{"name":"pytha_run_project_paths",
+          "arguments":{"workspace_root":"/abs/path/to/project",
+                       "project_paths":["src/main.lua","src/lib"]}}}
+```
+
+- All `project_paths` must resolve inside `workspace_root`. Anything
+  outside the root returns `Path escapes workspace root: …`.
+- Files are mirrored into `<tmpdir>/pytha-mcp/<sha256>/` preserving the
+  workspace-relative layout; directories are walked recursively.
+- Entry point autodetection: explicit `entry` wins, then `main.lua` /
+  `init.lua` / `index.lua` / `run.lua` at the staging root, then the
+  basename of the first file path supplied.
+- Re-running with the same payload reuses the staged dir (no re-copy).
+  Editing any source file invalidates the cache because the hash mixes
+  in per-file content hashes.
 
 #### `pytha_run_project` payload shape
 
