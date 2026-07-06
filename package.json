@@ -7,6 +7,7 @@
     "dev:runtime": "tsx watch runtime/index.ts",
     "dev:client": "vite",
     "mcp": "node.exe --import tsx runtime/mcp.ts",
+    "mcp:http": "node.exe --import tsx runtime/mcp_http.ts",
     "build": "vite build",
     "typecheck": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.runtime.json --noEmit",
     "test": "vitest run"

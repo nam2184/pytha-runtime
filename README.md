@@ -104,3 +104,73 @@ pyui.run_modal_dialog(init_dialog, {value = 150})
 ```
 
 ![UI Example](resources/images/ui.png)
+
+## MCP integration (for Arachne, Cursor, Claude Desktop, …)
+
+The Pytha runtime ships two MCP entry points so different clients can
+wire it up whichever way they prefer.
+
+| Command                | Transport                           | Use case                                  |
+|------------------------|-------------------------------------|-------------------------------------------|
+| `npm run mcp`          | stdio (newline-delimited JSON-RPC)  | Arachne / Cursor / Claude Desktop as a command |
+| `npm run mcp:http`     | streamable_http + legacy SSE        | Anything that wants a URL endpoint        |
+
+### `npm run mcp:http`
+
+Starts an HTTP MCP server on `http://127.0.0.1:7007/mcp`. Env vars:
+
+| Variable             | Default        | Meaning                                    |
+|----------------------|----------------|--------------------------------------------|
+| `PYTHA_HTTP_HOST`    | `127.0.0.1`    | Bind address                               |
+| `PYTHA_HTTP_PORT`    | `7007`         | Bind port                                  |
+| `PYTHA_HTTP_PATH`    | `/mcp`         | Base path                                  |
+| `PYTHA_HTTP_TOKEN`   | unset          | If set, requires `Authorization: Bearer …` |
+
+It speaks all three Arachne transports:
+
+- `streamable_http` — `POST /mcp` with `mcp-session-id` round-trip.
+- `polling_http` — same `POST /mcp`, plain `application/json` response.
+- legacy `sse` — `GET /mcp` opens the stream and emits `event: endpoint`
+  with the POST URL; follow-up `POST /mcp/messages?sessionId=…` returns
+  results via the open stream.
+
+#### Configuring it inside Arachne
+
+In Arachne's MCP settings (`transport = streamable_http`):
+
+```jsonc
+{
+  "pytha": {
+    "enabled": true,
+    "transport": "streamable_http",
+    "url": "http://127.0.0.1:7007/mcp",
+    "headers": { "Authorization": "Bearer <PYTHA_HTTP_TOKEN>" } // optional
+  }
+}
+```
+
+Arachne will auto-discover two tools:
+
+- `pytha_run_lua` — execute one or more Lua chunks/files and return the
+  Pytha runtime's feedback (render/log/ui messages).
+- `pytha_watch_lua` — watch a set of `.lua` paths and re-run when they
+  change, for live CAD scripting.
+
+### `npm run mcp`
+
+Same two tools, but the runtime reads newline-delimited JSON-RPC from
+its stdin. Use this from MCP hosts that spawn their own child processes
+(such as Arachne's stdio transport or Claude Desktop):
+
+```jsonc
+{
+  "pytha": {
+    "enabled": true,
+    "transport": "stdio",
+    "command": "node.exe",
+    "args": ["--import", "tsx", "runtime/mcp.ts"],
+    "cwd": "C:/path/to/pytha-runtime"
+  }
+}
+```
+
