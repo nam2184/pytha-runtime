@@ -13,11 +13,13 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@types/yauzl": "^3.4.0",
     "dotenv": "^17.4.2",
     "fengari": "^0.1.5",
     "jszip": "^3.10.1",
     "three": "^0.162.0",
-    "ws": "^8.16.0"
+    "ws": "^8.16.0",
+    "yauzl": "^3.4.0"
   },
   "devDependencies": {
     "@types/jszip": "^3.4.0",

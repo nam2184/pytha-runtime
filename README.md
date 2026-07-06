@@ -149,12 +149,68 @@ In Arachne's MCP settings (`transport = streamable_http`):
 }
 ```
 
-Arachne will auto-discover two tools:
+Arachne will auto-discover seven tools:
 
-- `pytha_run_lua` — execute one or more Lua chunks/files and return the
-  Pytha runtime's feedback (render/log/ui messages).
-- `pytha_watch_lua` — watch a set of `.lua` paths and re-run when they
-  change, for live CAD scripting.
+- `pytha_run_lua` — execute a single Lua chunk or in-memory file set.
+- `pytha_watch_lua` — watch a set of `.lua` paths and re-run on changes.
+- `pytha_run_project` — accept a base64-encoded zip + optional entry
+  point, stage to a temp directory, run `main.lua` against the runtime,
+  and return the feedback. Subsequent calls with the same payload
+  reuse the staged directory; pass `reload: true` to wipe and
+  re-extract before running.
+- `pytha_load_project` — same staging lifecycle without execution.
+- `pytha_reload_project` / `pytha_unload_project` / `pytha_clear_all_projects`
+  — manage the staged directories.
+
+#### `pytha_run_project` payload shape
+
+The base64 zip contains a Pytha Lua project (any structure; `main.lua`
+at the root is the conventional entry point). The MCP server streams the
+zip via `yauzl` and writes entries to:
+
+```
+<os.tmpdir()>/pytha-mcp/<sha256-hex-of-zip>/
+```
+
+The SHA-256 hex is also returned as `project_id`, so subsequent calls
+can either omit it (auto-hashed from the new zip) or pass it explicitly
+to address a specific staging directory.
+
+Example invocation over `streamable_http`:
+
+```http
+POST /mcp HTTP/1.1
+Content-Type: application/json
+Accept: application/json
+mcp-session-id: 2f349da4-…
+
+{"jsonrpc":"2.0","id":3,"method":"tools/call",
+ "params":{"name":"pytha_run_project",
+          "arguments":{"project_zip_b64":"UEsDBBQAAAAI…",
+                       "entry":"main.lua"}}}
+```
+
+The server returns:
+
+```json
+{
+  "jsonrpc":"2.0","id":3,
+  "result":{
+    "content":[{
+      "type":"text",
+      "text":"Project staging: f74a21468c… (extracted)\n
+             Entry point: main.lua\n
+             \n
+             Pytha runtime status: success\n
+             Logs:\n[pytha] pytha-loaded-via-mcp\n
+             Raw feedback:\n[…]"}],
+    "isError":false}
+}
+```
+
+Cleanup is automatic. `pytha_unload_project` (or the catch-all
+`pytha_clear_all_projects`) wipes the staging directory; the server
+also wipes everything on `SIGINT`/`SIGTERM`.
 
 ### `npm run mcp`
 

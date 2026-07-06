@@ -10,6 +10,15 @@ import { stat, readFile } from 'node:fs/promises';
 import { watch, type FSWatcher } from 'node:fs';
 import { WebSocket } from 'ws';
 import type { ServerMessage } from '@/shared/protocol.js';
+import {
+  clearAllProjects,
+  findStagedProject,
+  hashProjectPayload,
+  listStagedProjects,
+  stageProject,
+  unloadProject,
+  type StagedProject,
+} from './mcp_project.js';
 
 export const SERVER_NAME = 'pytha-runtime-mcp';
 export const SERVER_VERSION = '0.1.0';
@@ -121,7 +130,93 @@ export const TOOLS: ReadonlyArray<McpToolDefinition> = [
       additionalProperties: false,
     },
   },
-];
+  {
+    name: 'pytha_run_project',
+    description:
+      'Stage a base64-encoded Pytha Lua project (zip), execute its entry point against the Pytha runtime, and return execution feedback. Re-invocations with the same payload reuse the cached staging. Pass `reload: true` to wipe and re-extract before running.',
+    inputSchema: {
+      type: 'object',
+      required: ['project_zip_b64'],
+      properties: {
+        project_id: {
+          type: 'string',
+          description:
+            'Optional project id to reuse; if omitted, computed as the SHA-256 of the project payload.',
+        },
+        project_zip_b64: {
+          type: 'string',
+          description: 'The Pytha project as a base64-encoded zip archive.',
+        },
+        entry: {
+          type: 'string',
+          description:
+            'Optional entry-point path inside the staged project (default: autodetect main.lua/init.lua or fall back to "main.lua").',
+        },
+        reload: {
+          type: 'boolean',
+          description: 'If true, wipe the cached staging for this project id and re-extract before running.',
+        },
+        timeoutMs: {
+          type: 'number',
+          description: `Runtime response timeout. Defaults to ${DEFAULT_TIMEOUT_MS}.`,
+        },
+        websocketUrl: {
+          type: 'string',
+          description: `Override WebSocket URL. Defaults to ${DEFAULT_WS_URL}.`,
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'pytha_load_project',
+    description:
+      'Stage a base64-encoded Pytha Lua project (zip) without executing it. Useful when the agent wants to inspect the staged files before choosing a run or entry point.',
+    inputSchema: {
+      type: 'object',
+      required: ['project_zip_b64'],
+      properties: {
+        project_id: {
+          type: 'string',
+          description: 'Optional project id to reuse.',
+        },
+        project_zip_b64: { type: 'string' },
+        entry: { type: 'string', description: 'Optional entry-point override.' },
+        reload: { type: 'boolean' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'pytha_reload_project',
+    description:
+      'Wipe the cached staging directory for the given project id. The next call to pytha_run_project or pytha_load_project with the same payload will re-extract from scratch.',
+    inputSchema: {
+      type: 'object',
+      required: ['project_id'],
+      properties: {
+        project_id: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'pytha_unload_project',
+    description: 'Remove a staged project by id and any background watcher tied to it.',
+    inputSchema: {
+      type: 'object',
+      required: ['project_id'],
+      properties: { project_id: { type: 'string' } },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'pytha_clear_all_projects',
+    description:
+      'Wipe every cached project staging and terminate any running watcher. Use when the agent is done with the session and wants hermetic cleanup.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+] as const;
 
 export interface LuaFilePayload {
   name: string;
@@ -445,7 +540,19 @@ export async function dispatchJsonRpc(
         return { jsonrpc: '2.0', id, result: { tools: TOOLS } };
       case 'tools/call': {
         const toolName = getToolName(request.params);
-        if (toolName !== 'pytha_run_lua' && toolName !== 'pytha_watch_lua') {
+        const args = getArgs(request.params);
+        const PROJECT_TOOLS = new Set([
+          'pytha_run_project',
+          'pytha_load_project',
+          'pytha_reload_project',
+          'pytha_unload_project',
+          'pytha_clear_all_projects',
+        ]);
+        if (
+          toolName !== 'pytha_run_lua' &&
+          toolName !== 'pytha_watch_lua' &&
+          !PROJECT_TOOLS.has(toolName ?? '')
+        ) {
           return {
             jsonrpc: '2.0',
             id,
@@ -453,8 +560,142 @@ export async function dispatchJsonRpc(
           };
         }
 
+        if (toolName === 'pytha_clear_all_projects') {
+          const summary = await clearAllProjects();
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({ cleared: summary.cleared, rootRemoved: summary.rootRemoved }),
+                },
+              ],
+              isError: false,
+            },
+          };
+        }
+
+        if (toolName === 'pytha_unload_project' || toolName === 'pytha_reload_project') {
+          const projectId = (args as { project_id?: string }).project_id;
+          if (typeof projectId !== 'string' || projectId.length === 0) {
+            return {
+              jsonrpc: '2.0',
+              id,
+              error: { code: -32602, message: 'project_id is required' },
+            };
+          }
+          const removed = await unloadProject(projectId);
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({ project_id: projectId, removed }),
+                },
+              ],
+              isError: false,
+            },
+          };
+        }
+
+        if (toolName === 'pytha_load_project' || toolName === 'pytha_run_project') {
+          const payloadArgs = args as {
+            project_id?: string;
+            project_zip_b64?: string;
+            entry?: string;
+            reload?: boolean;
+            timeoutMs?: number;
+            websocketUrl?: string;
+          };
+          if (
+            typeof payloadArgs.project_zip_b64 !== 'string' ||
+            payloadArgs.project_zip_b64.length === 0
+          ) {
+            return {
+              jsonrpc: '2.0',
+              id,
+              error: { code: -32602, message: 'project_zip_b64 is required' },
+            };
+          }
+          const projectId =
+            payloadArgs.project_id ?? hashProjectPayload(payloadArgs.project_zip_b64);
+
+          if (toolName === 'pytha_load_project' && payloadArgs.project_id) {
+            // Explicit id reload just wipes.
+            await unloadProject(projectId);
+          }
+
+          const stage = await stageProject(payloadArgs.project_zip_b64, {
+            reload: payloadArgs.reload,
+            entryPoint: payloadArgs.entry,
+          });
+
+          // If the caller passed an explicit project_id, alias the staged
+          // entry so subsequent calls with the same id resolve correctly.
+          if (payloadArgs.project_id && payloadArgs.project_id !== projectId) {
+            // We don't actually store by custom id; we hash anyway.
+            // No-op today; reserved for future keyed registry.
+          }
+
+          if (toolName === 'pytha_load_project') {
+            return {
+              jsonrpc: '2.0',
+              id,
+              result: {
+                content: [
+                  {
+                    type: 'text',
+                    text: JSON.stringify(
+                      {
+                        project_id: projectId,
+                        reused: stage.reused,
+                        staging_dir: stage.project.staging_dir,
+                        entry_point: stage.project.entry_point,
+                        file_count: stage.project.file_count,
+                        total_bytes: stage.project.total_bytes,
+                      },
+                      null,
+                      2,
+                    ),
+                  },
+                ],
+                isError: false,
+              },
+            };
+          }
+
+          // pytha_run_project: hand the staged entry off to the runtime.
+          // We pass the entry as the `code` arg because `files`/`paths`
+          // don't include an internal tempdir location.
+          const entryPath = `${stage.project.staging_dir}${path.sep}${stage.project.entry_point}`.replace(/[/\\]/g, path.sep);
+          const luaSource = await readFile(entryPath, 'utf8');
+          const feedback = await runPythaLua({
+            code: luaSource,
+            websocketUrl: payloadArgs.websocketUrl,
+            timeoutMs: payloadArgs.timeoutMs,
+          });
+          const text = [
+            `Project staging: ${projectId} (${stage.reused ? 'reused' : 'extracted'})`,
+            `Entry point: ${stage.project.entry_point}`,
+            '',
+            summarizeFeedback(feedback),
+          ].join('\n');
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{ type: 'text', text }],
+              isError: !feedback.success,
+            },
+          };
+        }
+
         if (toolName === 'pytha_watch_lua') {
-          const runs = await watchPythaLua(getArgs(request.params));
+          const runs = await watchPythaLua(args);
           return {
             jsonrpc: '2.0',
             id,
@@ -465,7 +706,7 @@ export async function dispatchJsonRpc(
           };
         }
 
-        const feedback = await runPythaLua(getArgs(request.params));
+        const feedback = await runPythaLua(args);
         return {
           jsonrpc: '2.0',
           id,

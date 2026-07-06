@@ -92,7 +92,10 @@ describe('mcp_http streamable_http transport', () => {
     const parsedSecond = parseRpcResponseBody(second.body);
     const tools = (parsedSecond as { result?: { tools?: unknown[] } }).result?.tools;
     expect(Array.isArray(tools)).toBe(true);
-    expect((tools as unknown[]).length).toBe(2);
+    const toolNames = (tools as Array<{ name: string }>).map((tool) => tool.name);
+    expect(toolNames).toContain('pytha_run_lua');
+    expect(toolNames).toContain('pytha_watch_lua');
+    expect(toolNames).toContain('pytha_run_project');
   });
 
   it('returns 202 on notifications with no body', async () => {
